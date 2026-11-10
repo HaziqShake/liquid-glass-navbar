@@ -1,262 +1,224 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  Image,
-  TouchableOpacity,
-  StyleSheet,
-  StatusBar,
-} from 'react-native';
-import Animated from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Gear } from 'phosphor-react-native';
-import { useNavScroll } from '../context/NavScrollContext';
-import { useNavbarSettings } from '../settings/SettingsContext';
-import { LiquidGlassNavbar, NavItem } from '../components/LiquidGlassNavbar';
-import { SettingsSheet } from '../components/SettingsSheet';
-import { BACKGROUNDS, findBackground, type DemoBackground } from '../data/backgrounds';
+/**
+ * Demo screen: a scrolling photo background with the Anivio navbar on top.
+ *
+ * The background Image + ScrollView are wrapped in a BlurTargetView. The
+ * navbar's BlurView points at that target (blurTarget), which is what
+ * makes the blur real on Android (see AnivioNavbar).
+ *
+ * Scroll drives the label fraction (Anivio's NuvioNavBarScrollState):
+ * accumulate the scroll delta, collapse the labels past 60px down, expand
+ * past 60px up, reset the accumulator when the direction changes, expand
+ * at the very top. The fraction animates over 300ms with the standard
+ * cubic-bezier(0.2, 0, 0, 1). The scroll handler runs on an
+ * Animated.ScrollView, never a plain ScrollView with a worklet.
+ */
 
-const TABS: NavItem[] = [
-  { label: 'Home', icon: 'House', route: 'home' },
-  { label: 'Search', icon: 'MagnifyingGlass', route: 'search' },
-  { label: 'Saved', icon: 'Heart', route: 'saved' },
-  { label: 'Profile', icon: 'User', route: 'profile' },
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedScrollHandler,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import { BlurTargetView } from 'expo-blur';
+import { Books, Compass, Gear, House } from 'phosphor-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AnivioNavbar, type TabItem } from '../components/AnivioNavbar';
+import { SettingsSheet } from '../components/SettingsSheet';
+import { BACKGROUNDS, findBackground } from '../data/backgrounds';
+import { DEFAULT_SETTINGS, findPreset, type NavbarSettings } from '../settings/settings';
+
+const TABS: TabItem[] = [
+  { key: 'home', label: 'Home', icon: House },
+  { key: 'explore', label: 'Explore', icon: Compass },
+  { key: 'library', label: 'Library', icon: Books },
+  { key: 'settings', label: 'Settings', icon: Gear },
 ];
 
 const CARDS = [
-  { title: 'Anivio bar', body: 'Tahseen navbar, ported 1:1. The bar is a live GPU blur (Haze, 24dp) with a dark surface fill and a top edge highlight. Scroll and watch the photo blur live under the bar.' },
-  { title: 'The pill', body: 'The active tab indicator is a plain translucent pill inside the bar, not glass. Tap a tab and it springs over, stretching along its travel and squashing as it lands. The icon stays in the bar and the pill is drawn on top of it, so the bright icon shows through.' },
-  { title: 'Jelly springs', body: 'Eleven coupled springs drive the motion: a critically damped position spring, an underdamped velocity spring for squash and stretch, and rubber-banded track springs for the whole bar.' },
-  { title: 'Tweak it', body: 'Tap the gear up top to open settings: bar, springs, bounce, bar shape, background. Everything applies live.' },
-  { title: 'Touch and drag', body: 'Touch the bar and drag, no long-press needed. The pill follows your finger, grows to 1.3x while held, and settles with a wobble once it is nearly home.' },
-  { title: 'Squash and stretch', body: 'The pill elongates in its direction of travel, up to 25 percent longer, and squashes up to 20 percent vertically, both proportional to speed.' },
-  { title: 'Clean pill', body: 'The active indicator is a plain translucent pill inside the bar, 1:1 like Anivio. No refraction, no rainbow rim. It swells while held, that press grow is the magnification. The icon stays in the bar and the pill sits on top of it.' },
-  { title: 'Edge highlight', body: 'Light comes from the top. The edge is a white gradient, strong at the top and fading to nothing at the bottom. Its strength follows the edge reflection setting.' },
-  { title: 'Blur scrim', body: 'Behind the bar the content dissolves into a gradient of blur, not a background-colour fade.' },
-  { title: 'Live blur', body: 'The bar is a live GPU blur, like Anivio Haze. It blurs whatever is behind it, every frame, including while you scroll. No capture, no pause, nothing to freeze.' },
-  { title: 'Photos, cropped for the bar', body: 'Every photo is cropped to phone portrait, so the bar sits over real detail and colour at the bottom of the frame. That bottom band is what the blur melts into. Flat colours and gradients are gone, the bar gets its colours from the photo.' },
-  { title: 'One blur surface', body: 'Only the bar blurs. The pill is a plain View, so it can resize every frame without crashing. The bar layout is fixed, the shrink is a transform, so the pill scales with the bar by construction.' },
-  { title: 'Real build only', body: 'This needs a development build for the full experience and never works in Expo Go.' },
+  { title: 'Mountain Lake', body: 'Orange sunset reflection in the river, right behind the bar.' },
+  { title: 'Night Peaks', body: 'Dark scene, bright stars and a snowy peak above the bar.' },
+  { title: 'Ocean Wave', body: 'High-frequency water texture under the bar.' },
+  { title: 'Foggy Hills', body: 'Green valley and the road run right under the bar.' },
+  { title: 'Jelly Springs', body: 'Eleven coupled springs. The pill stretches as it travels and settles with a wobble.' },
+  { title: 'Live Blur', body: 'The bar blurs whatever is behind it, live, as the list scrolls.' },
+  { title: 'Drag the Bar', body: 'Press and drag across the bar. The pill follows your finger and snaps to the nearest tab.' },
+  { title: 'Tap a Tab', body: 'A tap under 4dp picks the tab under your finger. A longer drag picks the nearest tab.' },
+  { title: 'Scroll to Shrink', body: 'Scroll down and the labels collapse and the bar shrinks. Scroll up to bring them back.' },
+  { title: 'Edge Light', body: 'The rim catches light at the top-left and falls to shadow at the bottom-right.' },
+  { title: 'iOS 27 Default', body: 'Moderate tint. Not crystal clear, not heavily tinted. The photo stays visible through the glass.' },
+  { title: 'Anivio', body: "Tahseen's navbar, translated to Expo React Native. No capture library, no frozen frames." },
 ];
 
-export const DemoScreen: React.FC = () => {
+const SCROLL_THRESHOLD = 60;
+const LABEL_ANIMATION = { duration: 300, easing: Easing.bezier(0.2, 0, 0, 1) };
+
+export function DemoScreen(): React.JSX.Element {
   const insets = useSafeAreaInsets();
-  const { scrollHandler } = useNavScroll();
-  const { backgroundId, setBackgroundId, customPhotoUri, focusMode } = useNavbarSettings();
+  const [settings, setSettings] = useState<NavbarSettings>(DEFAULT_SETTINGS);
+  const [backgroundId, setBackgroundId] = useState(BACKGROUNDS[0].id);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [showSettings, setShowSettings] = useState(false);
 
-  const [activeRoute, setActiveRoute] = useState('home');
-  const [settingsVisible, setSettingsVisible] = useState(false);
+  const blurTargetRef = useRef<View>(null);
+  const labelFraction = useSharedValue(1);
+  const lastOffset = useSharedValue(0);
+  const accumulated = useSharedValue(0);
+  const springScales = useSharedValue({ stiffness: 1, damping: 1 });
 
-  const bg: DemoBackground =
-    backgroundId === 'custom-photo' && customPhotoUri
-      ? {
-          id: 'custom-photo',
-          label: 'Yours',
-          caption: 'Your own photo, picked from the gallery.',
-          kind: 'image',
-          source: { uri: customPhotoUri },
+  // Mirror the spring preset into the shared value the motion worklet reads.
+  useEffect(() => {
+    const preset = findPreset(settings.springPreset);
+    springScales.value = { stiffness: preset.stiffnessScale, damping: preset.dampingScale };
+  }, [settings.springPreset, springScales]);
+
+  const onSelect = useCallback((index: number) => {
+    setSelectedIndex(index);
+  }, []);
+
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      'worklet';
+      const y = event.contentOffset.y;
+      const delta = y - lastOffset.value;
+      lastOffset.value = y;
+      if (delta === 0) return;
+
+      // At the very top, expand the labels.
+      if (y <= 0) {
+        if (labelFraction.value !== 1) {
+          labelFraction.value = withTiming(1, LABEL_ANIMATION);
         }
-      : findBackground(backgroundId) ?? BACKGROUNDS[0];
+        accumulated.value = 0;
+        return;
+      }
+
+      accumulated.value += delta;
+
+      // Scrolling down past the threshold collapses the labels.
+      if (accumulated.value > SCROLL_THRESHOLD && labelFraction.value !== 0) {
+        labelFraction.value = withTiming(0, LABEL_ANIMATION);
+        accumulated.value = 0;
+      } else if (accumulated.value < -SCROLL_THRESHOLD && labelFraction.value !== 1) {
+        // Scrolling up past the threshold expands them again.
+        labelFraction.value = withTiming(1, LABEL_ANIMATION);
+        accumulated.value = 0;
+      }
+
+      // Reset the accumulator when the direction changes.
+      if (delta > 0 && accumulated.value < 0) accumulated.value = delta;
+      if (delta < 0 && accumulated.value > 0) accumulated.value = delta;
+    },
+  });
+
+  const background = findBackground(backgroundId) ?? BACKGROUNDS[0];
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
-      <Image source={bg.source} style={StyleSheet.absoluteFill} resizeMode="cover" />
-
-      {/* Focus mode: the demo content is hidden, only the background and
-          the navbar stay, so the bar is never covered while you tweak. The
-          small gear stays so the settings sheet can be reopened. */}
-      {focusMode && (
-        <TouchableOpacity
-          style={[styles.focusGear, { top: Math.max(insets.top, 16) + 8 }]}
-          onPress={() => setSettingsVisible(true)}
-          activeOpacity={0.7}
+      <BlurTargetView ref={blurTargetRef} style={styles.target}>
+        <Image source={background.source} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        <Animated.ScrollView
+          onScroll={scrollHandler}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingTop: insets.top + 24, paddingBottom: 140 },
+          ]}
         >
-          <Gear size={20} color="#FFFFFF" />
-        </TouchableOpacity>
-      )}
-
-      {!focusMode && (
-      <Animated.ScrollView
-        onScroll={scrollHandler}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.content,
-          { paddingTop: Math.max(insets.top, 16) + 8, paddingBottom: 150 },
-        ]}
-      >
-        <Text style={styles.title}>Anivio Navbar</Text>
-        <Text style={styles.subtitle}>Tahseen's jelly navbar, in Expo React Native.</Text>
-
-        <View style={styles.headerRow}>
-          <View style={styles.tierPill}>
-            <Text style={styles.tierText}>Anivio navbar</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.gearButton}
-            onPress={() => setSettingsVisible(true)}
-            activeOpacity={0.7}
-          >
-            <Gear size={20} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.sectionLabel}>BACKGROUND</Text>
-        <View style={styles.picker}>
-          {BACKGROUNDS.map((b) => (
-            <TouchableOpacity
-              key={b.id}
-              style={[styles.chip, b.id === backgroundId && styles.chipActive]}
-              onPress={() => setBackgroundId(b.id)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.chipText, b.id === backgroundId && styles.chipTextActive]}>
-                {b.label}
-              </Text>
-            </TouchableOpacity>
+          <Text style={styles.title}>Anivio Navbar</Text>
+          <Text style={styles.subtitle}>Tahseen&apos;s jelly navbar, in Expo React Native</Text>
+          {CARDS.map((card) => (
+            <View key={card.title} style={styles.card}>
+              <Text style={styles.cardTitle}>{card.title}</Text>
+              <Text style={styles.cardBody}>{card.body}</Text>
+            </View>
           ))}
-        </View>
-        <Text style={styles.caption}>{bg.caption}</Text>
+        </Animated.ScrollView>
+      </BlurTargetView>
 
-        {CARDS.map((card) => (
-          <View key={card.title} style={styles.card}>
-            <Text style={styles.cardTitle}>{card.title}</Text>
-            <Text style={styles.cardBody}>{card.body}</Text>
-          </View>
-        ))}
-      </Animated.ScrollView>
-      )}
+      <Pressable
+        style={[styles.settingsButton, { top: insets.top + 12 }]}
+        onPress={() => setShowSettings((v) => !v)}
+        hitSlop={8}
+      >
+        <Gear size={22} color="#FFFFFF" weight="regular" />
+      </Pressable>
 
-      <LiquidGlassNavbar
-        items={TABS}
-        activeRoute={activeRoute}
-        onPress={setActiveRoute}
+      <AnivioNavbar
+        tabs={TABS}
+        selectedIndex={selectedIndex}
+        onSelect={onSelect}
+        labelFraction={labelFraction}
+        blurTarget={blurTargetRef}
+        settings={settings}
+        springScales={springScales}
       />
 
-      <SettingsSheet
-        visible={settingsVisible}
-        onClose={() => setSettingsVisible(false)}
-      />
+      {showSettings ? (
+        <SettingsSheet
+          settings={settings}
+          onSettingsChange={setSettings}
+          backgroundId={backgroundId}
+          onBackgroundChange={setBackgroundId}
+          onClose={() => setShowSettings(false)}
+        />
+      ) : null}
     </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#0F0F0F',
   },
-  content: {
+  target: {
+    flex: 1,
+  },
+  scrollContent: {
     paddingHorizontal: 20,
   },
   title: {
     fontFamily: 'Inter-Medium',
-    fontSize: 32,
+    fontSize: 28,
     color: '#FFFFFF',
-    letterSpacing: -0.5,
   },
   subtitle: {
     fontFamily: 'Inter-Regular',
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginTop: 4,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 14,
-  },
-  tierPill: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 99,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  tierText: {
-    fontFamily: 'Inter-Medium',
-    fontSize: 12,
-    color: '#FFFFFF',
-  },
-  gearButton: {
-    padding: 10,
-    borderRadius: 99,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  focusGear: {
-    position: 'absolute',
-    right: 20,
-    padding: 10,
-    borderRadius: 99,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    zIndex: 10,
-  },
-  sectionLabel: {
-    fontFamily: 'Inter-Medium',
-    fontSize: 11,
-    letterSpacing: 1.5,
-    color: 'rgba(255, 255, 255, 0.6)',
-    marginTop: 22,
-    marginBottom: 10,
-  },
-  picker: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 99,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  chipActive: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#FFFFFF',
-  },
-  chipText: {
-    fontFamily: 'Inter-Medium',
-    fontSize: 13,
-    color: '#FFFFFF',
-  },
-  chipTextActive: {
-    color: '#111111',
-  },
-  caption: {
-    fontFamily: 'Inter-Regular',
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.75)',
-    marginTop: 10,
-    lineHeight: 18,
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: 6,
+    marginBottom: 20,
   },
   card: {
-    marginTop: 12,
-    borderRadius: 16,
+    backgroundColor: 'rgba(15,15,17,0.55)',
+    borderRadius: 18,
     padding: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    marginBottom: 12,
   },
   cardTitle: {
     fontFamily: 'Inter-Medium',
-    fontSize: 15,
+    fontSize: 17,
     color: '#FFFFFF',
   },
   cardBody: {
     fontFamily: 'Inter-Regular',
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.75)',
-    marginTop: 4,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 20,
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: 6,
+  },
+  settingsButton: {
+    position: 'absolute',
+    right: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(15,15,17,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
   },
 });

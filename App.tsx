@@ -1,10 +1,8 @@
 import React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { NavScrollProvider } from './src/context/NavScrollContext';
-import { SettingsProvider } from './src/settings/SettingsContext';
 import { DemoScreen } from './src/screens/DemoScreen';
 
 function App(): React.JSX.Element {
@@ -24,11 +22,7 @@ function App(): React.JSX.Element {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavScrollProvider>
-          <SettingsProvider>
-            <DemoScreen />
-          </SettingsProvider>
-        </NavScrollProvider>
+        <DemoScreen />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -1,189 +1,63 @@
 /**
- * Every tweakable value of the springy liquid navbar, in one place.
- * The demo app keeps these in React state (so the settings sheet can edit
- * them) and mirrors them into a Reanimated shared value (so the jelly
- * worklets can read them every frame without re-rendering).
+ * Navbar settings. Plain data, held in React state in DemoScreen.
+ * The spring preset scales are mirrored into a Reanimated shared value
+ * (see DemoScreen) so the motion worklet can read them.
  */
 
+export type SpringPresetId = 'water' | 'calm' | 'bouncy';
+
+export interface SpringPreset {
+  id: SpringPresetId;
+  label: string;
+  /** Multiplier applied to every spring's stiffness. */
+  stiffnessScale: number;
+  /** Multiplier applied to every spring's damping ratio (clamped to <= 1.0 in the solver). */
+  dampingScale: number;
+}
+
+export const SPRING_PRESETS: SpringPreset[] = [
+  { id: 'water', label: 'Water', stiffnessScale: 1.0, dampingScale: 1.0 },
+  { id: 'calm', label: 'Calm', stiffnessScale: 0.6, dampingScale: 1.25 },
+  { id: 'bouncy', label: 'Bouncy', stiffnessScale: 1.4, dampingScale: 0.7 },
+];
+
+export function findPreset(id: SpringPresetId): SpringPreset {
+  return SPRING_PRESETS.find((p) => p.id === id) ?? SPRING_PRESETS[0];
+}
+
 export interface NavbarSettings {
-  // Bar (Anivio's GlassBarSurface: a live GPU blur with a dark fill and
-  // a top edge highlight. barBlur is the expo-blur intensity, 0-100.
-  // barEdgeReflection is the edge highlight strength.)
+  /** expo-blur intensity, 0..100. Default 80. */
   barBlur: number;
+  /** Fill opacity over the blur, 0..1. iOS 27 default is a moderate tint:
+   * the background stays clearly visible, the glass has some body.
+   * Default 0.30 (lighter and more translucent than Anivio's 0.55). */
+  fillOpacity: number;
+  /** Edge highlight strength, 0..1. Default 0.35 (Anivio's value).
+   * Top edge opacity = 0.27 * (edgeReflection / 0.35). */
   barEdgeReflection: number;
-  // Springs (stiffness, damping ratio)
-  positionStiffness: number;
-  positionDamping: number;
-  velocityStiffness: number;
-  velocityDamping: number;
-  scaleStiffness: number;
-  scaleXDamping: number;
-  scaleYDamping: number;
-  trackStiffness: number;
-  trackDamping: number;
-  panelStiffness: number;
-  // Bounce
-  pressScale: number;
-  squashX: number;
-  squashY: number;
-  settleFraction: number;
-  tapThreshold: number;
-  // Bar shape
-  barWidthPct: number;
+  springPreset: SpringPresetId;
+  /** Bar height in dp. Fixed at 64 (Anivio's expanded track height). */
   barHeight: number;
+  /** Bar corner radius. Fixed at 32 (a full pill). */
   barRadius: number;
+  /** Width the bar shrinks to when labels collapse, as a fraction of full width. */
   shrunkWidthPct: number;
+  /** Height the bar shrinks to when labels collapse, in dp. */
   shrunkHeight: number;
-  // Effects
   glowEnabled: boolean;
+  /** Peak alpha of the touch glow. Anivio uses 0.15. */
   glowPeak: number;
-  trackEnabled: boolean;
-  panelLagEnabled: boolean;
-  squashEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: NavbarSettings = {
   barBlur: 80,
+  fillOpacity: 0.3,
   barEdgeReflection: 0.35,
-  positionStiffness: 1000,
-  positionDamping: 1.0,
-  velocityStiffness: 300,
-  velocityDamping: 0.5,
-  scaleStiffness: 250,
-  scaleXDamping: 0.6,
-  scaleYDamping: 0.7,
-  trackStiffness: 266.67,
-  trackDamping: 0.612,
-  panelStiffness: 300,
-  pressScale: 1.3,
-  squashX: 1.0,
-  squashY: 1.0,
-  settleFraction: 0.025,
-  tapThreshold: 4,
-  barWidthPct: 0.9,
+  springPreset: 'water',
   barHeight: 64,
   barRadius: 32,
   shrunkWidthPct: 0.7,
   shrunkHeight: 50,
   glowEnabled: true,
   glowPeak: 0.15,
-  trackEnabled: true,
-  panelLagEnabled: true,
-  squashEnabled: true,
 };
-
-export type NumericSettingKey = {
-  [K in keyof NavbarSettings]: NavbarSettings[K] extends number ? K : never;
-}[keyof NavbarSettings];
-
-export type BooleanSettingKey = {
-  [K in keyof NavbarSettings]: NavbarSettings[K] extends boolean ? K : never;
-}[keyof NavbarSettings];
-
-export type ControlDef =
-  | {
-      kind: 'slider';
-      key: NumericSettingKey;
-      label: string;
-      min: number;
-      max: number;
-      step: number;
-    }
-  | { kind: 'toggle'; key: BooleanSettingKey; label: string };
-
-export interface SettingsSection {
-  title: string;
-  note?: string;
-  controls: ControlDef[];
-}
-
-export const SETTINGS_SECTIONS: SettingsSection[] = [
-  {
-    title: 'Bar',
-    controls: [
-      { kind: 'slider', key: 'barBlur', label: 'Bar blur', min: 0, max: 100, step: 1 },
-      { kind: 'slider', key: 'barEdgeReflection', label: 'Bar edge reflection', min: 0, max: 1, step: 0.05 },
-    ],
-  },
-  {
-    title: 'Springs',
-    note: 'Stiffness is how snappy, damping ratio is how much it wobbles. 1.0 is critically damped, below 1.0 bounces.',
-    controls: [
-      { kind: 'slider', key: 'positionStiffness', label: 'Travel stiffness', min: 100, max: 2000, step: 50 },
-      { kind: 'slider', key: 'positionDamping', label: 'Travel damping', min: 0.3, max: 1.5, step: 0.05 },
-      { kind: 'slider', key: 'velocityStiffness', label: 'Squash stiffness', min: 100, max: 600, step: 10 },
-      { kind: 'slider', key: 'velocityDamping', label: 'Squash damping', min: 0.2, max: 1, step: 0.05 },
-      { kind: 'slider', key: 'scaleStiffness', label: 'Grow stiffness', min: 100, max: 500, step: 10 },
-      { kind: 'slider', key: 'scaleXDamping', label: 'Grow X damping', min: 0.3, max: 1, step: 0.05 },
-      { kind: 'slider', key: 'scaleYDamping', label: 'Grow Y damping', min: 0.3, max: 1, step: 0.05 },
-      { kind: 'slider', key: 'trackStiffness', label: 'Bar wobble stiffness', min: 100, max: 600, step: 10 },
-      { kind: 'slider', key: 'trackDamping', label: 'Bar wobble damping', min: 0.3, max: 1, step: 0.05 },
-      { kind: 'slider', key: 'panelStiffness', label: 'Panel lag stiffness', min: 100, max: 600, step: 10 },
-    ],
-  },
-  {
-    title: 'Bounce',
-    controls: [
-      { kind: 'slider', key: 'pressScale', label: 'Press grow', min: 1, max: 1.6, step: 0.05 },
-      { kind: 'slider', key: 'squashX', label: 'Stretch amount', min: 0, max: 1.5, step: 0.05 },
-      { kind: 'slider', key: 'squashY', label: 'Squash amount', min: 0, max: 1.5, step: 0.05 },
-      { kind: 'slider', key: 'settleFraction', label: 'Settle window', min: 0.01, max: 0.1, step: 0.005 },
-      { kind: 'slider', key: 'tapThreshold', label: 'Tap distance (dp)', min: 2, max: 10, step: 1 },
-    ],
-  },
-  {
-    title: 'Bar shape',
-    controls: [
-      { kind: 'slider', key: 'barWidthPct', label: 'Bar width', min: 0.7, max: 0.98, step: 0.01 },
-      { kind: 'slider', key: 'barHeight', label: 'Bar height', min: 48, max: 80, step: 1 },
-      { kind: 'slider', key: 'barRadius', label: 'Corner radius', min: 16, max: 40, step: 1 },
-      { kind: 'slider', key: 'shrunkWidthPct', label: 'Shrunk width', min: 0.5, max: 0.9, step: 0.05 },
-      { kind: 'slider', key: 'shrunkHeight', label: 'Shrunk height', min: 36, max: 64, step: 1 },
-    ],
-  },
-  {
-    title: 'Effects',
-    controls: [
-      { kind: 'toggle', key: 'glowEnabled', label: 'Touch glow' },
-      { kind: 'slider', key: 'glowPeak', label: 'Glow strength', min: 0, max: 0.3, step: 0.01 },
-      { kind: 'toggle', key: 'trackEnabled', label: 'Bar wobble' },
-      { kind: 'toggle', key: 'panelLagEnabled', label: 'Panel lag' },
-      { kind: 'toggle', key: 'squashEnabled', label: 'Squash and stretch' },
-    ],
-  },
-];
-
-export interface Preset {
-  name: string;
-  settings: NavbarSettings;
-}
-
-export const PRESETS: Preset[] = [
-  { name: 'Water', settings: DEFAULT_SETTINGS },
-  {
-    name: 'Calm',
-    settings: {
-      ...DEFAULT_SETTINGS,
-      velocityDamping: 0.8,
-      scaleXDamping: 0.9,
-      scaleYDamping: 0.9,
-      trackDamping: 0.8,
-      pressScale: 1.15,
-      squashX: 0.5,
-      squashY: 0.5,
-    },
-  },
-  {
-    name: 'Bouncy',
-    settings: {
-      ...DEFAULT_SETTINGS,
-      velocityDamping: 0.3,
-      scaleXDamping: 0.4,
-      scaleYDamping: 0.45,
-      trackDamping: 0.45,
-      pressScale: 1.45,
-      squashX: 1.3,
-      squashY: 1.3,
-    },
-  },
-];
