@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -26,34 +26,27 @@ const TABS: NavItem[] = [
 
 const CARDS = [
   { title: 'Refraction, not blur', body: 'The bar bends the photo behind it. Scroll and watch the rim distort the image as content passes under.' },
-  { title: 'The pill', body: 'The active tab indicator is a plain translucent pill inside the bar, not glass. Tap a tab and it springs over, stretching along its travel and squashing as it lands. The bright icon rides on top of it.' },
+  { title: 'The pill', body: 'The active tab indicator is a plain translucent pill inside the bar, not glass. Tap a tab and it springs over, stretching along its travel and squashing as it lands. The icon stays in the bar and the pill is drawn on top of it, so the bright icon shows through.' },
   { title: 'Jelly springs', body: 'Eleven coupled springs drive the motion: a critically damped position spring, an underdamped velocity spring for squash and stretch, and rubber-banded track springs for the whole bar.' },
   { title: 'Tweak it', body: 'Tap the gear up top to open settings: glass, springs, bounce, bar shape, background. Everything applies live.' },
-  { title: 'Touch and drag', body: 'Touch the droplet and drag, no long-press needed. The pill follows your finger, grows to 1.3x while held, and settles with a wobble once it is nearly home.' },
+  { title: 'Touch and drag', body: 'Touch the bar and drag, no long-press needed. The pill follows your finger, grows to 1.3x while held, and settles with a wobble once it is nearly home.' },
   { title: 'Squash and stretch', body: 'The droplet elongates in its direction of travel, up to 25 percent longer, and squashes up to 20 percent vertically, both proportional to speed.' },
-  { title: 'Clean pill', body: 'The active indicator is a plain translucent pill inside the bar, 1:1 like Anivio. No refraction, no rainbow rim. It swells while held, that press grow is the magnification. The bright icon rides on top of it.' },
+  { title: 'Clean pill', body: 'The active indicator is a plain translucent pill inside the bar, 1:1 like Anivio. No refraction, no rainbow rim. It swells while held, that press grow is the magnification. The icon stays in the bar and the pill sits on top of it.' },
   { title: 'Specular rim', body: 'Light comes from the top. The edge reflection is soft on purpose, 0.35 on the bar, 0.5 on the droplet.' },
   { title: 'Legibility veil', body: 'A faint adaptive veil sits under the icons so they stay readable over clear glass, even on bright photos.' },
   { title: 'Blur scrim', body: 'Behind the bar the content dissolves into a gradient of blur, not a background-colour fade.' },
-  { title: 'Pause while scrolling', body: 'Glass capture pauses on drag, on momentum, and while the bar expands after a tap, then resumes. That is what keeps Android from crashing.' },
+  { title: 'Live blur', body: 'The glass captures live, every frame, including while you scroll. Nothing pauses it, so the backdrop behind the bar always moves with the content. The bar never resizes its layout, the shrink is a transform scale, so there is no resize to guard against.' },
   { title: 'Photos, cropped for the bar', body: 'Every photo is cropped to phone portrait, so the bar sits over real detail and colour at the bottom of the frame. That bottom band is what the glass bends. Flat colours and gradients are gone, the glass gets its colours from the photo.' },
   { title: 'Tier readout', body: 'The pill above shows the rendering tier this device actually used: glass, refraction, blur, tint or none.' },
-  { title: 'One glass surface', body: 'Only the bar is glass. The pill is a plain View, so it can resize every frame without crashing, and the bar is the only thing that has to capture the background.' },
+  { title: 'One glass surface', body: 'Only the bar is glass. The pill is a plain View, so it can resize every frame without crashing, and the bar is the only thing that has to capture the background. The bar layout is fixed, the shrink is a transform, so the pill scales with the bar by construction.' },
   { title: 'Real build only', body: 'This is a native module. It needs a development build and never works in Expo Go.' },
 ];
 
 export const DemoScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const { scrollHandler, resetGlassPause } = useNavScroll();
+  const { scrollHandler } = useNavScroll();
   const { backgroundId, setBackgroundId, customPhotoUri, focusMode } = useNavbarSettings();
 
-  // Focus mode mounts/unmounts the ScrollView. If it unmounts mid-scroll
-  // the scroll handler's end events never fire and the glass pause sticks,
-  // freezing the bar on a stale frame (it looks like a screenshot). Reset
-  // the pause whenever focus mode flips so the bar always re-captures.
-  useEffect(() => {
-    resetGlassPause();
-  }, [focusMode]);
   const [activeRoute, setActiveRoute] = useState('home');
   const [tier, setTier] = useState<GlassTier | null>(null);
   const [settingsVisible, setSettingsVisible] = useState(false);

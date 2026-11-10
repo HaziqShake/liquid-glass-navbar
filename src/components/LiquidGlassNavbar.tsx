@@ -4,8 +4,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useAnimatedStyle,
   interpolate,
-  Extrapolation,
-  SharedValue,
   AnimatedStyle,
   runOnJS,
 } from 'react-native-reanimated';
@@ -26,9 +24,9 @@ const ICON_MAP: Record<string, any> = {
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 /**
- * The pill's inset from the bar's edge, in dp. Anivio's jellyPillPath uses
- * a 4dp inset on every side, and the tab row is padded by the same 4dp,
- * so the pill and the icons share one grid.
+ * Anivio's jellyPillPath inset. The pill sits 4dp inside the bar on every
+ * side, and the tab row is padded by the same 4dp, so the pill and the
+ * icons share one grid.
  */
 const PILL_INSET = 4;
 
@@ -46,61 +44,41 @@ export interface LiquidGlassNavbarProps {
   onTier?: (tier: GlassTier) => void;
 }
 
-// Animated wrapper so the bar can still shrink on scroll
+// Animated wrapper for the glass view.
 const AnimatedLiquidGlassView = Animated.createAnimatedComponent(LiquidGlassView);
 
 interface TabItemProps {
   item: NavItem;
-  index: number;
-  /** The jelly position spring (tab-index units, fractional while travelling). */
-  pillIndex: SharedValue<number>;
-  /** The jelly press spring (0 to 1 while the finger is down). */
-  press: SharedValue<number>;
+  /** True for the selected tab: bright icon and label, so it reads through the pill. */
+  active: boolean;
   inactiveColor: string;
   labelCollapseStyle: AnimatedStyle<ViewStyle>;
-  iconScaleStyle: AnimatedStyle<ViewStyle>;
 }
 
 /**
- * One tab, Anivio's JellyTabRow. The icon and label live in the bar. The
- * icon fades OUT as the pill covers this tab (opacity 1 - coverage),
- * which is Anivio's ClipOp.Difference cut-out: the inactive icon is never
- * drawn under the pill. The bright active icon is not here at all, it is
- * a child of the pill, drawn on top of the pill's fill.
+ * One tab. The icon and label live in the bar and never move. The active
+ * tab is bright (white, fill weight); the inactive tabs are dim (0.65
+ * alpha, regular weight). The pill is a translucent overlay drawn ON TOP
+ * of this row, so the active icon shows through it. Nothing is drawn on
+ * top of the pill, and nothing fades out under it.
  */
 const TabItem: React.FC<TabItemProps> = ({
   item,
-  index,
-  pillIndex,
-  press,
+  active,
   inactiveColor,
   labelCollapseStyle,
-  iconScaleStyle,
 }) => {
   const IconComp = ICON_MAP[item.icon] || CircleNotch;
-
-  // 1 when the pill is centered on this tab, 0 when a full slot away
-  const fadeStyle = useAnimatedStyle(() => {
-    const coverage = interpolate(
-      pillIndex.value,
-      [index - 1, index, index + 1],
-      [0, 1, 0],
-      Extrapolation.CLAMP,
-    );
-    return { opacity: 1 - coverage };
-  });
-
-  const contentScaleStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 + 0.2 * press.value }],
-  }));
+  const color = active ? '#FFFFFF' : inactiveColor;
+  const weight = active ? 'fill' : 'regular';
 
   return (
     <View style={styles.iconSlot}>
-      <Animated.View style={[styles.iconWrapper, iconScaleStyle, fadeStyle]}>
-        <IconComp size={22} color={inactiveColor} weight="regular" />
-      </Animated.View>
-      <Animated.View style={[labelCollapseStyle, fadeStyle]}>
-        <Animated.Text style={[styles.label, { color: inactiveColor }]}>
+      <View style={styles.iconWrapper}>
+        <IconComp size={22} color={color} weight={weight} />
+      </View>
+      <Animated.View style={labelCollapseStyle}>
+        <Animated.Text style={[styles.label, { color }]}>
           {item.label}
         </Animated.Text>
       </Animated.View>
@@ -120,9 +98,8 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
   const activeIndex = items.findIndex(i => i.route === activeRoute);
   const maxIndex = items.length - 1;
 
-  // Jelly motion: eleven coupled springs (Anivio). The position spring is the
-  // pill's center in tab-index units; everything else hangs off it. Spring
-  // configs come from settings, so they retune live.
+  // Jelly motion: eleven coupled springs (Anivio). The position spring is
+  // the pill's centre in tab-index units; everything else hangs off it.
   const jelly = useJellyMotion(
     activeIndex >= 0 ? activeIndex : 0,
     items.length,
@@ -139,49 +116,64 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
     }
   }, [activeIndex]);
 
-  const { translateY, compact, glassPaused, expandNavbar } = useNavScroll();
+  const { translateY, compact, expandNavbar } = useNavScroll();
 
-  // Bar geometry, all from settings. Full size first, shrunk size while
-  // scrolling down (width + height; pill follows, it is drawn from the
-  // bar's size so it cannot drift out of sync).
+  // ------------------------------------------------------------------
+  // Bar geometry. FIXED. The bar's layout size never changes: width is
+  // 90% of the screen and height is 64, always. This is the whole point
+  // of this rewrite. The old bar animated its layout width and height,
+  // which resized the glass view while it was capturing, and that is
+  // what crashed. A layout that never changes cannot crash that way.
+  // The shrink is a transform scale (below), which only changes how the
+  // bar is drawn, never its layout.
+  // ------------------------------------------------------------------
   const navWidth = SCREEN_WIDTH * settings.barWidthPct;
   const navHeight = settings.barHeight;
-  const shrunkWidth = navWidth * settings.shrunkWidthPct;
-  const shrunkHeight = settings.shrunkHeight;
+  // Anivio's tab width: the bar minus the 4dp inset on each side, split
+  // evenly. The pill and the gesture share this one tab width, so the
+  // finger, the pill and the icons all agree on where a tab is.
+  const tabW = (navWidth - 2 * PILL_INSET) / items.length;
+  const itemH = navHeight - 2 * PILL_INSET;
 
-  // Shrink the bar while scrolling down. The glass is PAUSED during scroll
-  // (see glassPaused), so it holds a static frame while resizing, safe,
-  // unlike capturing during scroll which crashes.
-  const containerShrinkStyle = useAnimatedStyle(() => ({
-    height: interpolate(compact.value, [0, 1], [navHeight, shrunkHeight]),
-    width: interpolate(compact.value, [0, 1], [navWidth, shrunkWidth]),
-  }));
-
-  // Bar geometry in the current (possibly shrunk) state, for the gesture
-  // and the pill. Anivio's tab width: the bar minus the 4dp inset on each
-  // side, split evenly. The pill and the gesture share this one tab width,
-  // so the finger, the pill and the icons all agree on where a tab is.
-  const geometry = () => {
-    'worklet';
+  // ------------------------------------------------------------------
+  // Shrink. A transform scale driven by `compact`, 1 at rest and the
+  // shrunk size while scrolling down. It pivots on the bar's centre, so
+  // the bar stays centred while it shrinks. This is a pure transform:
+  // the bar's layout size, and the glass view's layout size, never
+  // change. The pill is a child of the bar, so it is scaled by the same
+  // transform and resizes with the bar by construction. There is no
+  // separate layout to keep in sync, so it cannot drift. The ratios
+  // come from settings, the same numbers the old layout shrink used:
+  // width to shrunkWidthPct, height to shrunkHeight / barHeight.
+  // ------------------------------------------------------------------
+  const shrinkStyle = useAnimatedStyle(() => {
     const cfg = settingsShared.value;
-    const wFull = SCREEN_WIDTH * cfg.barWidthPct;
-    const w = interpolate(compact.value, [0, 1], [wFull, wFull * cfg.shrunkWidthPct]);
-    const h = interpolate(compact.value, [0, 1], [cfg.barHeight, cfg.shrunkHeight]);
-    const tabW = (w - 2 * PILL_INSET) / items.length;
-    const itemH = h - 2 * PILL_INSET;
-    return { w, h, tabW, itemH };
-  };
+    const sx = interpolate(compact.value, [0, 1], [1, cfg.shrunkWidthPct]);
+    const sy = interpolate(compact.value, [0, 1], [1, cfg.shrunkHeight / cfg.barHeight]);
+    const cx = navWidth / 2;
+    const cy = navHeight / 2;
+    return {
+      transform: [
+        { translateX: cx },
+        { translateY: cy },
+        { scaleX: sx },
+        { scaleY: sy },
+        { translateX: -cx },
+        { translateY: -cy },
+      ],
+    };
+  });
 
-  // The pill, Anivio's jellyPillPath, drawn as a plain translucent View
-  // INSIDE the bar, not a second glass view. That is the whole fix. A plain
-  // View has no backdrop capture, so its size can change every frame (squash,
-  // stretch, bar shrink) without ever crashing, and because its size is
-  // computed from the bar's live size it resizes with the bar by
-  // construction, there is no separate layout to keep in sync. It is a
-  // solid accent fill at low alpha, exactly like Anivio's selectedSurface,
-  // so the icon underneath shows through faintly and the bright active icon
-  // (its child) reads on top. The press grow from the jelly springs is the
-  // magnification: the pill swells to pressScale while held, 1:1 like Anivio.
+  // ------------------------------------------------------------------
+  // The pill, Anivio's jellyPillPath, as a plain translucent View
+  // INSIDE the bar. It is not glass. A plain View has no backdrop
+  // capture, so its size can change every frame (squash, stretch) and
+  // it can be transform-scaled with the bar without ever crashing.
+  // Geometry is Anivio's, from the FIXED bar size: 4dp inset, tab width
+  // = (bar width - 8) / count, item height = bar height - 8, centre =
+  // inset + (position + 0.5) * tab width. The squash and stretch come
+  // from the jelly springs, the same publish formula Anivio uses.
+  // ------------------------------------------------------------------
   const pillStyle = useAnimatedStyle(() => {
     const cfg = settingsShared.value;
     const speed = jelly.velocity.value / 10;
@@ -190,38 +182,28 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
     const sy = cfg.squashEnabled ? cfg.squashY * 0.25 : 0;
     const pillScaleX = jelly.scaleX.value / (1 - clampSpeed(speed * sx));
     const pillScaleY = jelly.scaleY.value * (1 - clampSpeed(speed * sy));
-    const g = geometry();
-    const pillW = g.tabW * pillScaleX;
-    const pillH = g.itemH * pillScaleY;
-    const centerX = PILL_INSET + (jelly.position.value + 0.5) * g.tabW;
+    const pillW = tabW * pillScaleX;
+    const pillH = itemH * pillScaleY;
+    const centerX = PILL_INSET + (jelly.position.value + 0.5) * tabW;
     return {
       width: pillW,
       height: pillH,
       left: centerX - pillW / 2,
-      top: (g.h - pillH) / 2,
+      top: (itemH - pillH) / 2 + PILL_INSET,
     };
   });
 
-  // The active icon rides inside the pill, on top of its fill. It grows
-  // with the press spring (1 + 0.2 * press), Anivio's contentScale.
-  const pillIconStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 + 0.2 * jelly.press.value }],
-  }));
-
-  // Labels fade out and collapse while scrolling down
+  // Labels fade out and collapse while scrolling down. Labels are plain
+  // Views, not glass, so collapsing them is safe.
   const labelCollapseStyle = useAnimatedStyle(() => ({
     opacity: 1 - compact.value,
     height: interpolate(compact.value, [0, 1], [14, 0]),
     overflow: 'hidden' as const,
   }));
 
-  const iconScaleStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: interpolate(compact.value, [0, 1], [1, 0.88]) }],
-  }));
-
-  // Whole-bar jelly: the bar scales and pulls around the touch point while
-  // dragging (Anivio track springs). The scale pivots on originX via the
-  // translate trick, since React Native has no transform origin.
+  // Whole-bar jelly: the bar scales and pulls around the touch point
+  // while dragging (Anivio track springs). The scale pivots on originX
+  // via the translate trick, since React Native has no transform origin.
   const trackStyle = useAnimatedStyle(() => {
     const ox = jelly.originX.value;
     return {
@@ -240,11 +222,8 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
     if (!settingsShared.value.panelLagEnabled) {
       return { transform: [{ translateX: 0 }] };
     }
-    const cfg = settingsShared.value;
-    const wFull = SCREEN_WIDTH * cfg.barWidthPct;
-    const barW = interpolate(compact.value, [0, 1], [wFull, wFull * cfg.shrunkWidthPct]);
     return {
-      transform: [{ translateX: jellyPanelOffset(jelly.panel.value, barW) }],
+      transform: [{ translateX: jellyPanelOffset(jelly.panel.value, navWidth) }],
     };
   });
 
@@ -262,13 +241,6 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
 
   const inactiveColor = 'rgba(255, 255, 255, 0.65)';
 
-  // The icon that rides inside the pill. It is the selected tab's icon,
-  // drawn bright on top of the pill's translucent fill.
-  const ActiveIconComp =
-    activeIndex >= 0
-      ? ICON_MAP[items[activeIndex].icon] || CircleNotch
-      : CircleNotch;
-
   // Tapping any tab pops a shrunk bar back open, then navigates. The pill
   // springs there with a press pulse (jelly select).
   const handlePress = (route: string) => {
@@ -280,40 +252,39 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
     onPress(route);
   };
 
-  // Jelly gesture lifecycle (Anivio). The gesture is on the whole bar, not
-  // on the pill: the pill follows the finger from touch down, and tap vs
-  // drag is decided at release by the 4dp rule inside jelly.finish. There
-  // is no TouchableOpacity on the tabs, the gesture is the only tap path,
-  // so a tap can never fire twice.
+  // Jelly gesture lifecycle (Anivio). The gesture is on the whole bar,
+  // not on the pill: the pill follows the finger from touch down, and
+  // tap vs drag is decided at release by the 4dp rule inside
+  // jelly.finish. There is no TouchableOpacity on the tabs, the gesture
+  // is the only tap path, so a tap can never fire twice. Geometry is
+  // fixed (tabW, navWidth, navHeight), so the finger and the pill agree
+  // even while the bar is shrunk: the gesture reports layout
+  // coordinates, and the pill is laid out in layout coordinates.
   const pan = Gesture.Pan()
     .onBegin((e) => {
       'worklet';
-      const g = geometry();
-      jelly.begin(e.x, e.y, g.h, g.tabW, maxIndex, g.w);
+      jelly.begin(e.x, e.y, navHeight, tabW, maxIndex, navWidth);
     })
     .onUpdate((e) => {
       'worklet';
-      const g = geometry();
       jelly.drag(
         e.translationX,
         e.translationY,
-        g.tabW,
+        tabW,
         maxIndex,
-        g.w,
-        g.h,
+        navWidth,
+        navHeight,
       );
     })
     .onEnd(() => {
       'worklet';
-      const g = geometry();
-      const index = jelly.finish(g.tabW, maxIndex);
+      const index = jelly.finish(tabW, maxIndex);
       runOnJS(handlePress)(items[index].route);
     })
     .onFinalize(() => {
       'worklet';
       if (jelly.dragging.value) {
-        const g = geometry();
-        const index = jelly.finish(g.tabW, maxIndex);
+        const index = jelly.finish(tabW, maxIndex);
         runOnJS(handlePress)(items[index].route);
       }
     });
@@ -330,83 +301,88 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
       <BlurScrim edge="bottom" height={170} />
       <Animated.View style={trackStyle} pointerEvents="box-none">
         <Animated.View style={panelStyle} pointerEvents="box-none">
-          <GestureDetector gesture={pan}>
-            <AnimatedLiquidGlassView
-              variant="clear"
-              thickness={settings.barThickness}
-              blurRadius={settings.barBlur}
-              // No dispersion anywhere: iridescence is the artificial
-              // rainbow rim, and it is off.
-              iridescence={0}
-              saturation={settings.saturation}
-              edgeReflectionStrength={settings.barEdgeReflection}
-              legibilityFloor={settings.legibilityFloor}
-              interactive
-              paused={glassPaused}
-              borderRadius={settings.barRadius}
-              onPipelineReady={(e) => onTier?.(e.nativeEvent.tier)}
-              onError={(e) => console.warn('[glass] bar error', e.nativeEvent)}
-              style={[
-                styles.navContainer,
-                containerShrinkStyle,
-                { borderRadius: settings.barRadius },
-              ]}>
-              {/* Tab icons and labels. The pill sits on top of them. */}
-              <View style={styles.iconRow}>
-                {items.map((item, index) => (
-                  <TabItem
-                    key={item.route}
-                    item={item}
-                    index={index}
-                    pillIndex={jelly.position}
-                    press={jelly.press}
-                    inactiveColor={inactiveColor}
-                    labelCollapseStyle={labelCollapseStyle}
-                    iconScaleStyle={iconScaleStyle}
+          <Animated.View style={shrinkStyle} pointerEvents="box-none">
+            <GestureDetector gesture={pan}>
+              <AnimatedLiquidGlassView
+                variant="clear"
+                thickness={settings.barThickness}
+                blurRadius={settings.barBlur}
+                // No dispersion anywhere: iridescence is the artificial
+                // rainbow rim, and it is off.
+                iridescence={0}
+                saturation={settings.saturation}
+                edgeReflectionStrength={settings.barEdgeReflection}
+                legibilityFloor={settings.legibilityFloor}
+                interactive
+                // No `paused` prop, on purpose. The glass captures live,
+                // every frame, including while scrolling. That is the fix
+                // for the frozen screenshot blur. The old code paused the
+                // capture during every scroll, so the bar held a stale
+                // frame exactly when the backdrop was moving, which is
+                // why it felt like a screenshot. Pausing is gone because
+                // the crash it was guarding against is gone too: the bar
+                // no longer resizes its layout, so there is no
+                // resize-while-capturing to guard against.
+                borderRadius={settings.barRadius}
+                onPipelineReady={(e) => onTier?.(e.nativeEvent.tier)}
+                onError={(e) => console.warn('[glass] bar error', e.nativeEvent)}
+                style={[
+                  styles.navContainer,
+                  { width: navWidth, height: navHeight, borderRadius: settings.barRadius },
+                ]}>
+                {/* Tab icons and labels. They live in the bar. The pill
+                    is drawn on top of them, below. */}
+                <View style={styles.iconRow}>
+                  {items.map((item, index) => (
+                    <TabItem
+                      key={item.route}
+                      item={item}
+                      active={index === activeIndex}
+                      inactiveColor={inactiveColor}
+                      labelCollapseStyle={labelCollapseStyle}
+                    />
+                  ))}
+                </View>
+
+                {/* The pill. A plain translucent View inside the bar,
+                    not glass, drawn ON TOP of the icons. The active icon
+                    underneath shows through its 0.15 alpha fill. It is
+                    a child of the bar, so the shrink transform scales
+                    it in lockstep with the bar, and its geometry comes
+                    from the bar's fixed size, so it can never drift. */}
+                {activeIndex >= 0 && (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[styles.pill, pillStyle]}
                   />
-                ))}
-              </View>
+                )}
 
-              {/* The pill. A plain translucent View inside the bar, not
-                  glass, so it can resize every frame without crashing.
-                  It overlays the icons, and its bright active icon rides
-                  on top of its fill. */}
-              {activeIndex >= 0 && (
-                <Animated.View
-                  pointerEvents="none"
-                  style={[styles.pill, pillStyle]}
-                >
-                  <Animated.View style={[styles.pillIcon, pillIconStyle]}>
-                    <ActiveIconComp size={22} color="#FFFFFF" weight="fill" />
+                {/* Touch glow: radial gradient, radius 300, peak alpha
+                    from settings, centered on the finger while dragging
+                    (Anivio JellyDrawing). */}
+                {settings.glowEnabled && (
+                  <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]}>
+                    <Svg width={300} height={300}>
+                      <Defs>
+                        <RadialGradient
+                          id="touchGlow"
+                          cx="150"
+                          cy="150"
+                          r="150"
+                          gradientUnits="userSpaceOnUse"
+                        >
+                          <Stop offset="0" stopColor="#FFFFFF" stopOpacity={settings.glowPeak} />
+                          <Stop offset="0.45" stopColor="#FFFFFF" stopOpacity={settings.glowPeak * 0.43} />
+                          <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
+                        </RadialGradient>
+                      </Defs>
+                      <Circle cx="150" cy="150" r="150" fill="url(#touchGlow)" />
+                    </Svg>
                   </Animated.View>
-                </Animated.View>
-              )}
-
-              {/* Touch glow: radial gradient, radius 300, peak alpha from
-                  settings, centered on the finger while dragging (Anivio
-                  JellyDrawing). */}
-              {settings.glowEnabled && (
-                <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]}>
-                  <Svg width={300} height={300}>
-                    <Defs>
-                      <RadialGradient
-                        id="touchGlow"
-                        cx="150"
-                        cy="150"
-                        r="150"
-                        gradientUnits="userSpaceOnUse"
-                      >
-                        <Stop offset="0" stopColor="#FFFFFF" stopOpacity={settings.glowPeak} />
-                        <Stop offset="0.45" stopColor="#FFFFFF" stopOpacity={settings.glowPeak * 0.43} />
-                        <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
-                      </RadialGradient>
-                    </Defs>
-                    <Circle cx="150" cy="150" r="150" fill="url(#touchGlow)" />
-                  </Svg>
-                </Animated.View>
-              )}
-            </AnimatedLiquidGlassView>
-          </GestureDetector>
+                )}
+              </AnimatedLiquidGlassView>
+            </GestureDetector>
+          </Animated.View>
         </Animated.View>
       </Animated.View>
     </Animated.View>
@@ -430,12 +406,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     borderRadius: 99,
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pillIcon: {
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   glow: {
     position: 'absolute',
