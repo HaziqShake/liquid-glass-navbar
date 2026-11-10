@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "@react-native-community/slider": "5.2.0",
+    "babel-preset-expo": "~57.0.0",
     "expo": "~57.0.0",
     "expo-blur": "57.0.3",
     "expo-font": "~57.0.4",
