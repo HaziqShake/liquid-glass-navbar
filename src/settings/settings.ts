@@ -6,15 +6,12 @@
  */
 
 export interface NavbarSettings {
-  // Glass
+  // Glass (the bar is the only glass surface now, the pill is a plain
+  // View, so there are no droplet glass settings)
   barThickness: number;
   barBlur: number;
-  dropletBlur: number;
-  /** Subtle centre magnification of the droplet (Anivio-style clean lens). 1 samples the backdrop 1:1. */
-  dropletMagnification: number;
   saturation: number;
   barEdgeReflection: number;
-  dropletEdgeReflection: number;
   legibilityFloor: number;
   // Springs (stiffness, damping ratio)
   positionStiffness: number;
@@ -50,11 +47,8 @@ export interface NavbarSettings {
 export const DEFAULT_SETTINGS: NavbarSettings = {
   barThickness: 0.75,
   barBlur: 1,
-  dropletBlur: 1,
-  dropletMagnification: 1.1,
   saturation: 0.8,
   barEdgeReflection: 0.35,
-  dropletEdgeReflection: 0.5,
   legibilityFloor: 0.4,
   positionStiffness: 1000,
   positionDamping: 1.0,
@@ -114,11 +108,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     controls: [
       { kind: 'slider', key: 'barThickness', label: 'Bar thickness', min: 0.3, max: 2, step: 0.05 },
       { kind: 'slider', key: 'barBlur', label: 'Bar blur', min: 0, max: 20, step: 1 },
-      { kind: 'slider', key: 'dropletBlur', label: 'Droplet blur', min: 0, max: 20, step: 1 },
-      { kind: 'slider', key: 'dropletMagnification', label: 'Droplet magnification', min: 1, max: 1.5, step: 0.05 },
       { kind: 'slider', key: 'saturation', label: 'Saturation', min: 0, max: 1.5, step: 0.05 },
       { kind: 'slider', key: 'barEdgeReflection', label: 'Bar edge reflection', min: 0, max: 1, step: 0.05 },
-      { kind: 'slider', key: 'dropletEdgeReflection', label: 'Droplet edge reflection', min: 0, max: 1, step: 0.05 },
       { kind: 'slider', key: 'legibilityFloor', label: 'Legibility veil', min: 0, max: 0.8, step: 0.05 },
     ],
   },

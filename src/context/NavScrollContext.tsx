@@ -18,6 +18,14 @@ interface NavScrollContextType {
   showNavbar: () => void;
   hideNavbar: () => void;
   expandNavbar: () => void;
+  /**
+   * Force the glass pause off. The scroll handler normally clears it on
+   * drag/momentum end, but if the ScrollView unmounts mid-scroll (focus
+   * mode toggles it off) those end events never fire and the pause sticks,
+   * freezing the glass on its last frame. Call this whenever the scroll
+   * view mounts or unmounts.
+   */
+  resetGlassPause: () => void;
 }
 
 const NavScrollContext = createContext<NavScrollContextType | null>(null);
@@ -139,8 +147,17 @@ export const NavScrollProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  const resetGlassPause = () => {
+    setScrollPaused(false);
+    setExpandPaused(false);
+    if (expandTimer.current) {
+      clearTimeout(expandTimer.current);
+      expandTimer.current = null;
+    }
+  };
+
   return (
-    <NavScrollContext.Provider value={{ translateY, scrollY, compact, glassPaused, scrollHandler, showNavbar, hideNavbar, expandNavbar }}>
+    <NavScrollContext.Provider value={{ translateY, scrollY, compact, glassPaused, scrollHandler, showNavbar, hideNavbar, expandNavbar, resetGlassPause }}>
       {children}
     </NavScrollContext.Provider>
   );
