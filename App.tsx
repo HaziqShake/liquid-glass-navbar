@@ -4,6 +4,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavScrollProvider } from './src/context/NavScrollContext';
+import { SettingsProvider } from './src/settings/SettingsContext';
 import { DemoScreen } from './src/screens/DemoScreen';
 
 function App(): React.JSX.Element {
@@ -24,7 +25,9 @@ function App(): React.JSX.Element {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <NavScrollProvider>
-          <DemoScreen />
+          <SettingsProvider>
+            <DemoScreen />
+          </SettingsProvider>
         </NavScrollProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

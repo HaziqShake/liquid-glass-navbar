@@ -18,16 +18,13 @@ import { House, MagnifyingGlass, Heart, User, CircleNotch } from 'phosphor-react
 import { useNavScroll } from '../context/NavScrollContext';
 import { useJellyMotion } from '../jelly/useJellyMotion';
 import { jellyPanelOffset } from '../jelly/JellySpring';
+import { useNavbarSettings } from '../settings/SettingsContext';
 
 const ICON_MAP: Record<string, any> = {
   House, MagnifyingGlass, Heart, User, CircleNotch,
 };
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const NAV_WIDTH = SCREEN_WIDTH * 0.9;
-const NAV_HEIGHT = 64;
-const SHRUNK_HEIGHT = 50;
-const NAV_RADIUS = 32;
 
 export interface NavItem {
   label: string;
@@ -132,16 +129,18 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
   onTier,
 }) => {
   const insets = useSafeAreaInsets();
+  const { settings, settingsShared } = useNavbarSettings();
 
   const activeIndex = items.findIndex(i => i.route === activeRoute);
   const maxIndex = items.length - 1;
 
   // Jelly motion: eleven coupled springs (Anivio). The position spring is the
-  // pill's center in tab-index units; everything else hangs off it.
+  // pill's center in tab-index units; everything else hangs off it. Spring
+  // configs come from settings, so they retune live.
   const jelly = useJellyMotion(
     activeIndex >= 0 ? activeIndex : 0,
     items.length,
-    NAV_WIDTH / 2,
+    settingsShared,
   );
 
   // If the active route ever changes from outside, drive the pill there.
@@ -156,20 +155,28 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
 
   const { translateY, compact, glassPaused, expandNavbar } = useNavScroll();
 
-  // Shrink the bar while scrolling down (width + height; droplet follows).
-  // The glass is PAUSED during scroll (see glassPaused), so it holds a static
-  // frame while resizing, safe, unlike capturing during scroll which crashes.
-  const SHRUNK_WIDTH = NAV_WIDTH * 0.7;
+  // Bar geometry, all from settings. Full size first, shrunk size while
+  // scrolling down (width + height; droplet follows).
+  const navWidth = SCREEN_WIDTH * settings.barWidthPct;
+  const navHeight = settings.barHeight;
+  const shrunkWidth = navWidth * settings.shrunkWidthPct;
+  const shrunkHeight = settings.shrunkHeight;
+
+  // Shrink the bar while scrolling down. The glass is PAUSED during scroll
+  // (see glassPaused), so it holds a static frame while resizing, safe,
+  // unlike capturing during scroll which crashes.
   const containerShrinkStyle = useAnimatedStyle(() => ({
-    height: interpolate(compact.value, [0, 1], [NAV_HEIGHT, SHRUNK_HEIGHT]),
-    width: interpolate(compact.value, [0, 1], [NAV_WIDTH, SHRUNK_WIDTH]),
+    height: interpolate(compact.value, [0, 1], [navHeight, shrunkHeight]),
+    width: interpolate(compact.value, [0, 1], [navWidth, shrunkWidth]),
   }));
 
   // Bar geometry in the current (possibly shrunk) state, for the gesture.
   const geometry = () => {
     'worklet';
-    const w = interpolate(compact.value, [0, 1], [NAV_WIDTH, SHRUNK_WIDTH]);
-    const h = interpolate(compact.value, [0, 1], [NAV_HEIGHT, SHRUNK_HEIGHT]);
+    const cfg = settingsShared.value;
+    const wFull = SCREEN_WIDTH * cfg.barWidthPct;
+    const w = interpolate(compact.value, [0, 1], [wFull, wFull * cfg.shrunkWidthPct]);
+    const h = interpolate(compact.value, [0, 1], [cfg.barHeight, cfg.shrunkHeight]);
     const slotW = w / items.length;
     const pillW = slotW * 0.9;
     return { w, h, slotW, pillOff: (slotW - pillW) / 2 };
@@ -179,27 +186,25 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
   // NOT frosted, true liquid glass transmits and bends light.
   // The jelly squash and stretch (Anivio publish formula): the pill
   // stretches along its direction of travel and squashes vertically,
-  // both proportional to speed, X reacting 3x as strongly as Y.
+  // both proportional to speed, X reacting 3x as strongly as Y. The
+  // amounts are the settings multipliers on the 0.75 / 0.25 factors.
   const dropletStyle = useAnimatedStyle(() => {
+    const cfg = settingsShared.value;
     const speed = jelly.velocity.value / 10;
     const clampSpeed = (v: number) => Math.min(Math.max(v, -0.2), 0.2);
-    const pillScaleX = jelly.scaleX.value / (1 - clampSpeed(speed * 0.75));
-    const pillScaleY = jelly.scaleY.value * (1 - clampSpeed(speed * 0.25));
-    const h = interpolate(compact.value, [0, 1], [NAV_HEIGHT * 0.9, SHRUNK_HEIGHT * 0.9]);
-    const w = interpolate(compact.value, [0, 1], [NAV_WIDTH, SHRUNK_WIDTH]);
-    const slotW = w / items.length;
-    const pillW = slotW * 0.9;
-    const pillOff = (slotW - pillW) / 2;
+    const sx = cfg.squashEnabled ? cfg.squashX * 0.75 : 0;
+    const sy = cfg.squashEnabled ? cfg.squashY * 0.25 : 0;
+    const pillScaleX = jelly.scaleX.value / (1 - clampSpeed(speed * sx));
+    const pillScaleY = jelly.scaleY.value * (1 - clampSpeed(speed * sy));
+    const g = geometry();
+    const pillW = g.slotW * 0.9;
+    const h = g.h * 0.9;
     return {
       width: pillW,
       height: h,
-      top: interpolate(
-        compact.value,
-        [0, 1],
-        [(NAV_HEIGHT - NAV_HEIGHT * 0.9) / 2, (SHRUNK_HEIGHT - SHRUNK_HEIGHT * 0.9) / 2]
-      ),
+      top: (g.h - h) / 2,
       transform: [
-        { translateX: jelly.position.value * slotW + pillOff },
+        { translateX: jelly.position.value * g.slotW + g.pillOff },
         { scaleX: pillScaleX },
         { scaleY: pillScaleY },
       ],
@@ -235,7 +240,12 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
 
   // The bar content lags a few dp behind the finger (Anivio panel offset).
   const panelStyle = useAnimatedStyle(() => {
-    const barW = interpolate(compact.value, [0, 1], [NAV_WIDTH, SHRUNK_WIDTH]);
+    if (!settingsShared.value.panelLagEnabled) {
+      return { transform: [{ translateX: 0 }] };
+    }
+    const cfg = settingsShared.value;
+    const wFull = SCREEN_WIDTH * cfg.barWidthPct;
+    const barW = interpolate(compact.value, [0, 1], [wFull, wFull * cfg.shrunkWidthPct]);
     return {
       transform: [{ translateX: jellyPanelOffset(jelly.panel.value, barW) }],
     };
@@ -327,20 +337,21 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
         <Animated.View style={panelStyle} pointerEvents="box-none">
           <AnimatedLiquidGlassView
             variant="clear"
-            thickness={0.75}
-            blurRadius={6}
-            iridescence={0}
-            saturation={0.8}
-            edgeReflectionStrength={0.35}
-            legibilityFloor={0.4}
+            thickness={settings.barThickness}
+            blurRadius={settings.barBlur}
+            iridescence={settings.barIridescence}
+            saturation={settings.saturation}
+            edgeReflectionStrength={settings.barEdgeReflection}
+            legibilityFloor={settings.legibilityFloor}
             interactive
             paused={glassPaused}
-            borderRadius={NAV_RADIUS}
+            borderRadius={settings.barRadius}
             onPipelineReady={(e) => onTier?.(e.nativeEvent.tier)}
             onError={(e) => console.warn('[glass] bar error', e.nativeEvent)}
             style={[
               styles.navContainer,
               containerShrinkStyle,
+              { borderRadius: settings.barRadius },
             ]}>
             {/* Tab Items */}
             <View style={styles.iconRow}>
@@ -361,29 +372,32 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
             </View>
           </AnimatedLiquidGlassView>
 
-          {/* Touch glow: radial gradient, radius 300, peak alpha 0.15,
-              centered on the finger while dragging (Anivio JellyDrawing). */}
-          <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]}>
-            <Svg width={300} height={300}>
-              <Defs>
-                <RadialGradient
-                  id="touchGlow"
-                  cx="150"
-                  cy="150"
-                  r="150"
-                  gradientUnits="userSpaceOnUse"
-                >
-                  <Stop offset="0" stopColor="#FFFFFF" stopOpacity="0.15" />
-                  <Stop offset="0.45" stopColor="#FFFFFF" stopOpacity="0.0645" />
-                  <Stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
-                </RadialGradient>
-              </Defs>
-              <Circle cx="150" cy="150" r="150" fill="url(#touchGlow)" />
-            </Svg>
-          </Animated.View>
+          {/* Touch glow: radial gradient, radius 300, peak alpha from
+              settings, centered on the finger while dragging (Anivio
+              JellyDrawing). */}
+          {settings.glowEnabled && (
+            <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]}>
+              <Svg width={300} height={300}>
+                <Defs>
+                  <RadialGradient
+                    id="touchGlow"
+                    cx="150"
+                    cy="150"
+                    r="150"
+                    gradientUnits="userSpaceOnUse"
+                  >
+                    <Stop offset="0" stopColor="#FFFFFF" stopOpacity={settings.glowPeak} />
+                    <Stop offset="0.45" stopColor="#FFFFFF" stopOpacity={settings.glowPeak * 0.43} />
+                    <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
+                  </RadialGradient>
+                </Defs>
+                <Circle cx="150" cy="150" r="150" fill="url(#touchGlow)" />
+              </Svg>
+            </Animated.View>
+          )}
 
           {/* The droplet floats OVER the bar (not clipped inside it), when held
-              it grows to 1.3x and draws above the navbar silhouette. */}
+              it grows to the press scale and draws above the navbar silhouette. */}
           {activeIndex >= 0 && (
             <Animated.View
               style={[styles.dropletLayer, containerShrinkStyle, { bottom: 0 }]}
@@ -392,11 +406,11 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
               <GestureDetector gesture={pan}>
                 <AnimatedLiquidGlassView
                   variant="clear"
-                  thickness={1.0}
-                  blurRadius={4}
-                  iridescence={0}
-                  saturation={0.8}
-                  edgeReflectionStrength={0.5}
+                  thickness={settings.dropletThickness}
+                  blurRadius={settings.dropletBlur}
+                  iridescence={settings.dropletIridescence}
+                  saturation={settings.saturation}
+                  edgeReflectionStrength={settings.dropletEdgeReflection}
                   paused={glassPaused}
                   borderRadius={99}
                   onError={(e) => console.warn('[glass] droplet error', e.nativeEvent)}
@@ -422,9 +436,6 @@ const styles = StyleSheet.create({
     zIndex: 1000,
   },
   navContainer: {
-    width: NAV_WIDTH,
-    height: NAV_HEIGHT,
-    borderRadius: NAV_RADIUS,
     flexDirection: 'row',
   },
   dropletLayer: {

@@ -1,3 +1,4 @@
+import { Dimensions } from 'react-native';
 import { useSharedValue, useFrameCallback } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
 import {
@@ -6,6 +7,7 @@ import {
   jellySpringSnapTo,
   jellyRubberBand,
 } from './JellySpring';
+import type { NavbarSettings } from '../settings/settings';
 
 /**
  * Jelly spring physics, ported from Anivio's JellyMotion
@@ -16,27 +18,25 @@ import {
  * mass 1. The frame loop advances them with an analytic solver and sleeps
  * when every spring is at rest, exactly like Anivio's withFrameNanos loop.
  *
- * Spring table (stiffness, damping ratio):
- *   position   1000,   1.0    pill center, critically damped, no overshoot on travel
- *   velocity   300,    0.5    tracks position velocity, drives squash and stretch
+ * All spring configs come from the settings shared value, so the settings
+ * sheet can retune them live. Defaults are Anivio's table:
+ *   position   1000,   1.0    pill center, critically damped, no overshoot
+ *   velocity   300,    0.5    tracks position velocity, drives squash/stretch
  *   press      1000,   1.0    0 to 1 while the finger is down
  *   scaleX     250,    0.6    pill X scale, 1.0 resting / 1.3 pressed
- *   scaleY     250,    0.7    pill Y scale, same targets, different damping so
- *                             X and Y settle out of phase (the jelly wobble)
+ *   scaleY     250,    0.7    pill Y scale, same targets, settles out of
+ *                             phase with X (the jelly wobble)
  *   panel      300,    1.0    raw horizontal drag offset for the panel lag
  *   trackY, trackX, trackPress, glow
  *              266.67, 0.612  whole-bar distortion springs
- *              (stiffness 240 / 0.9, damping 18 / (2 * sqrt(240 * 0.9)))
  */
 
-export const JELLY_PRESS_SCALE = 1.3;
+/** Whole-bar swell while dragging. */
 export const JELLY_TRACK_PRESS = 1.025;
-export const JELLY_TAP_THRESHOLD = 4;
-export const JELLY_SETTLE_FRACTION = 0.025;
+/** Frame delta clamp, seconds. */
 export const JELLY_MAX_DT = 0.064;
 
-const TRACK_STIFFNESS = 240 / 0.9;
-const TRACK_DAMPING = 18 / (2 * Math.sqrt(240 * 0.9));
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 function useSpringPair(initialValue: number) {
   const value = useSharedValue(initialValue);
@@ -100,7 +100,7 @@ export interface JellyMotion {
 export function useJellyMotion(
   initialIndex: number,
   itemCount: number,
-  restOriginX: number,
+  settings: SharedValue<NavbarSettings>,
 ): JellyMotion {
   const maxIndex = Math.max(itemCount - 1, 0);
 
@@ -126,7 +126,7 @@ export function useJellyMotion(
   const dragStartPanel = useSharedValue(0);
   const dragStartY = useSharedValue(0);
   const movedDistance = useSharedValue(0);
-  const originX = useSharedValue(restOriginX);
+  const originX = useSharedValue((SCREEN_WIDTH * 0.9) / 2);
   const glowY = useSharedValue(0);
 
   const indexAt = (x: number, slotWidth: number) => {
@@ -154,6 +154,7 @@ export function useJellyMotion(
 
   const advance = (seconds: number) => {
     'worklet';
+    const cfg = settings.value;
     const delta = Math.min(Math.max(seconds, 0), JELLY_MAX_DT);
     positionTarget.value = Math.min(
       Math.max(positionTarget.value, 0),
@@ -163,8 +164,8 @@ export function useJellyMotion(
       position.value,
       position.velocity,
       positionTarget.value,
-      1000,
-      1.0,
+      cfg.positionStiffness,
+      cfg.positionDamping,
       delta,
     );
     jellySpringAdvance(
@@ -173,19 +174,27 @@ export function useJellyMotion(
       dragging.value && maxIndex > 0
         ? position.velocity.value / maxIndex
         : 0,
-      300,
-      0.5,
+      cfg.velocityStiffness,
+      cfg.velocityDamping,
       delta,
     );
     if (!dragging.value) {
-      jellySpringAdvance(panel.value, panel.velocity, 0, 300, 1.0, delta);
+      jellySpringAdvance(
+        panel.value,
+        panel.velocity,
+        0,
+        cfg.panelStiffness,
+        1.0,
+        delta,
+      );
     }
-    // The settle trick: only relax from 1.3x back to 1.0 once the pill is
-    // nearly home, so the squash happens at the destination, not mid-flight.
+    // The settle trick: only relax from the press grow back to 1.0 once the
+    // pill is nearly home, so the squash happens at the destination, not
+    // mid-flight.
     if (
       releasePending.value &&
       Math.abs(position.value.value - positionTarget.value) <
-        Math.max(1, maxIndex) * JELLY_SETTLE_FRACTION
+        Math.max(1, maxIndex) * cfg.settleFraction
     ) {
       releasePending.value = false;
       pressTarget.value = 0;
@@ -203,32 +212,32 @@ export function useJellyMotion(
       scaleX.value,
       scaleX.velocity,
       shapeTarget.value,
-      250,
-      0.6,
+      cfg.scaleStiffness,
+      cfg.scaleXDamping,
       delta,
     );
     jellySpringAdvance(
       scaleY.value,
       scaleY.velocity,
       shapeTarget.value,
-      250,
-      0.7,
+      cfg.scaleStiffness,
+      cfg.scaleYDamping,
       delta,
     );
     jellySpringAdvance(
       trackPress.value,
       trackPress.velocity,
-      dragging.value ? JELLY_TRACK_PRESS : 1.0,
-      TRACK_STIFFNESS,
-      TRACK_DAMPING,
+      cfg.trackEnabled && dragging.value ? JELLY_TRACK_PRESS : 1.0,
+      cfg.trackStiffness,
+      cfg.trackDamping,
       delta,
     );
     jellySpringAdvance(
       glow.value,
       glow.velocity,
-      dragging.value ? 1.0 : 0.0,
-      TRACK_STIFFNESS,
-      TRACK_DAMPING,
+      cfg.glowEnabled && dragging.value ? 1.0 : 0.0,
+      cfg.trackStiffness,
+      cfg.trackDamping,
       delta,
     );
     if (!dragging.value) {
@@ -236,20 +245,20 @@ export function useJellyMotion(
         trackY.value,
         trackY.velocity,
         0,
-        TRACK_STIFFNESS,
-        TRACK_DAMPING,
+        cfg.trackStiffness,
+        cfg.trackDamping,
         delta,
       );
       jellySpringAdvance(
         trackX.value,
         trackX.velocity,
         1,
-        TRACK_STIFFNESS,
-        TRACK_DAMPING,
+        cfg.trackStiffness,
+        cfg.trackDamping,
         delta,
       );
       if (jellySpringIsAtRest(trackX.value, trackX.velocity, 1)) {
-        originX.value = restOriginX;
+        originX.value = (SCREEN_WIDTH * cfg.barWidthPct) / 2;
       }
     }
   };
@@ -293,7 +302,7 @@ export function useJellyMotion(
     dragging.value = true;
     releasePending.value = false;
     pressTarget.value = 1;
-    shapeTarget.value = JELLY_PRESS_SCALE;
+    shapeTarget.value = settings.value.pressScale;
     panel.velocity.value = 0;
     wake();
   };
@@ -308,21 +317,26 @@ export function useJellyMotion(
   ) => {
     'worklet';
     if (!dragging.value || slotWidth <= 0) return;
+    const cfg = settings.value;
     positionTarget.value = Math.min(
       Math.max(dragStartTarget.value + dx / slotWidth, 0),
       maxIndexArg,
     );
-    jellySpringSnapTo(panel.value, panel.velocity, dragStartPanel.value + dx);
-    jellySpringSnapTo(
-      trackY.value,
-      trackY.velocity,
-      dragStartY.value + jellyRubberBand(dy, barHeight) * 0.25,
-    );
-    jellySpringSnapTo(
-      trackX.value,
-      trackX.velocity,
-      1 - Math.min(Math.abs(dy) / 700, 1) * 0.08,
-    );
+    if (cfg.panelLagEnabled) {
+      jellySpringSnapTo(panel.value, panel.velocity, dragStartPanel.value + dx);
+    }
+    if (cfg.trackEnabled) {
+      jellySpringSnapTo(
+        trackY.value,
+        trackY.velocity,
+        dragStartY.value + jellyRubberBand(dy, barHeight) * 0.25,
+      );
+      jellySpringSnapTo(
+        trackX.value,
+        trackX.velocity,
+        1 - Math.min(Math.abs(dy) / 700, 1) * 0.08,
+      );
+    }
     originX.value = Math.min(
       Math.max(downBarX.value + dx, 0),
       barWidth,
@@ -336,7 +350,7 @@ export function useJellyMotion(
   const finish = (slotWidth: number, maxIndexArg: number) => {
     'worklet';
     const index =
-      movedDistance.value < JELLY_TAP_THRESHOLD && slotWidth > 0
+      movedDistance.value < settings.value.tapThreshold && slotWidth > 0
         ? indexAt(downBarX.value, slotWidth)
         : Math.min(
             Math.max(Math.floor(positionTarget.value + 0.5), 0),
@@ -354,7 +368,7 @@ export function useJellyMotion(
     'worklet';
     positionTarget.value = index;
     pressTarget.value = 1;
-    shapeTarget.value = JELLY_PRESS_SCALE;
+    shapeTarget.value = settings.value.pressScale;
     releasePending.value = true;
     wake();
   };

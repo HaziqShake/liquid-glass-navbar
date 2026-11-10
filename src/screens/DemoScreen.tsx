@@ -10,9 +10,13 @@ import {
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GlassTier } from 'react-native-liquid-glassmorphism';
+import { Gear } from 'phosphor-react-native';
+import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { useNavScroll } from '../context/NavScrollContext';
+import { useNavbarSettings } from '../settings/SettingsContext';
 import { LiquidGlassNavbar, NavItem } from '../components/LiquidGlassNavbar';
-import { BACKGROUNDS } from '../data/backgrounds';
+import { SettingsSheet } from '../components/SettingsSheet';
+import { BACKGROUNDS, findBackground, type DemoBackground } from '../data/backgrounds';
 
 const TABS: NavItem[] = [
   { label: 'Home', icon: 'House', route: 'home' },
@@ -25,8 +29,10 @@ const CARDS = [
   { title: 'Refraction, not blur', body: 'The bar bends the photo behind it. Scroll and watch the rim distort the image as content passes under.' },
   { title: 'The droplet', body: 'The active tab indicator is a second glass lens. Tap a tab and it springs over, stretching along its travel and squashing as it lands.' },
   { title: 'Jelly springs', body: 'Eleven coupled springs drive the motion: a critically damped position spring, an underdamped velocity spring for squash and stretch, and rubber-banded track springs for the whole bar.' },
+  { title: 'Tweak it', body: 'Tap the gear up top to open settings: colour split, glass, springs, bounce, bar shape, background. Everything applies live.' },
   { title: 'Touch and drag', body: 'Touch the droplet and drag, no long-press needed. The pill follows your finger, grows to 1.3x while held, and settles with a wobble once it is nearly home.' },
   { title: 'Squash and stretch', body: 'The droplet elongates in its direction of travel, up to 25 percent longer, and squashes up to 20 percent vertically, both proportional to speed.' },
+  { title: 'Colour split', body: 'White light breaks into red and blue at the rim. The dispersion sliders in settings control how strong it is, 0.3 is already visible. Try it on the White background.' },
   { title: 'Specular rim', body: 'Light comes from the top. The edge reflection is soft on purpose, 0.35 on the bar, 0.5 on the droplet.' },
   { title: 'Legibility veil', body: 'A faint adaptive veil sits under the icons so they stay readable over clear glass, even on bright photos.' },
   { title: 'Blur scrim', body: 'Behind the bar the content dissolves into a gradient of blur, not a background-colour fade.' },
@@ -40,19 +46,45 @@ const CARDS = [
 export const DemoScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { scrollHandler } = useNavScroll();
-  const [backgroundId, setBackgroundId] = useState('mountain-lake');
+  const { backgroundId, setBackgroundId, customPhotoUri } = useNavbarSettings();
   const [activeRoute, setActiveRoute] = useState('home');
   const [tier, setTier] = useState<GlassTier | null>(null);
+  const [settingsVisible, setSettingsVisible] = useState(false);
 
-  const bg = BACKGROUNDS.find((b) => b.id === backgroundId) ?? BACKGROUNDS[0];
+  const bg: DemoBackground =
+    backgroundId === 'custom-photo' && customPhotoUri
+      ? {
+          id: 'custom-photo',
+          label: 'Yours',
+          caption: 'Your own photo, picked from the gallery.',
+          kind: 'image',
+          source: { uri: customPhotoUri },
+        }
+      : findBackground(backgroundId) ?? BACKGROUNDS[0];
 
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" />
       {bg.kind === 'image' && bg.source ? (
         <Image source={bg.source} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      ) : bg.kind === 'gradient' && bg.colors ? (
+        <Svg
+          style={StyleSheet.absoluteFill}
+          width="100%"
+          height="100%"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          <Defs>
+            <LinearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor={bg.colors[0]} />
+              <Stop offset="1" stopColor={bg.colors[1]} />
+            </LinearGradient>
+          </Defs>
+          <Rect x="0" y="0" width="100" height="100" fill="url(#bgGrad)" />
+        </Svg>
       ) : (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: bg.color }]} />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: bg.color ?? '#0F0F0F' }]} />
       )}
 
       <Animated.ScrollView
@@ -67,10 +99,19 @@ export const DemoScreen: React.FC = () => {
         <Text style={styles.title}>Liquid Glass</Text>
         <Text style={styles.subtitle}>A refractive navbar, not a blur panel.</Text>
 
-        <View style={styles.tierPill}>
-          <Text style={styles.tierText}>
-            {tier ? `render tier: ${tier}` : 'render tier: waiting for first frame'}
-          </Text>
+        <View style={styles.headerRow}>
+          <View style={styles.tierPill}>
+            <Text style={styles.tierText}>
+              {tier ? `render tier: ${tier}` : 'render tier: waiting for first frame'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.gearButton}
+            onPress={() => setSettingsVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Gear size={20} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.sectionLabel}>BACKGROUND</Text>
@@ -104,6 +145,11 @@ export const DemoScreen: React.FC = () => {
         onPress={setActiveRoute}
         onTier={setTier}
       />
+
+      <SettingsSheet
+        visible={settingsVisible}
+        onClose={() => setSettingsVisible(false)}
+      />
     </View>
   );
 };
@@ -128,9 +174,14 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.7)',
     marginTop: 4,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
   tierPill: {
     alignSelf: 'flex-start',
-    marginTop: 14,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 99,
@@ -142,6 +193,13 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Medium',
     fontSize: 12,
     color: '#FFFFFF',
+  },
+  gearButton: {
+    padding: 10,
+    borderRadius: 99,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   sectionLabel: {
     fontFamily: 'Inter-Medium',

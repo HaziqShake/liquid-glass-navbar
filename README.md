@@ -1,8 +1,10 @@
 # Liquid Glass Navbar
 
-A standalone demo of a true liquid glass bottom navbar for React Native
-(Expo). One refractive bar, one sliding magnifying droplet as the active tab
-indicator, over switchable stock photo backgrounds.
+A standalone playground for a true liquid glass bottom navbar for React
+Native (Expo). One refractive bar, one sliding magnifying droplet as the
+active tab indicator, jelly spring physics, and a settings sheet that lets
+you retune all of it live: colour split, glass, springs, bounce, bar shape,
+and background.
 
 Liquid glass is a physically based material, not a blur panel. It refracts
 (bends the light of whatever is behind it), reflects (specular highlights on
@@ -11,14 +13,19 @@ looks frosted, it is wrong.
 
 ## Backgrounds
 
-The demo ships with five stock photos from Unsplash plus one flat colour, all
-in `assets/backgrounds/`:
+Photos, colours, gradients, and your own photo, switched from the chips on
+screen or from the settings sheet (gear icon, Background section):
 
-- Lake: mountain lake, sharp detail everywhere, the best refraction test.
-- Night: night peaks, dark scene with bright stars, tests the specular rim.
-- Ocean: ocean wave, high-frequency water texture under the bar.
-- Gradient: soft violet gradient, the minimum the glass needs to read at all.
-- Hills: foggy hills, low contrast, shows how the legibility veil helps.
+- Photos: Lake, Night, Ocean, Gradient, Hills. Stock photos from Unsplash,
+  bundled in `assets/backgrounds/`. Lake is the best refraction test, Night
+  tests the specular rim, Hills shows how the legibility veil helps.
+- Colours: White, Cream, Black, Navy, Red, Green, Blue, Purple. White is the
+  best way to see the colour split, white light breaks into red and blue at
+  the rim.
+- Gradients: Sunset, Ocean, Violet, Forest, Peach, Midnight. Rendered with
+  `react-native-svg`, no extra dependency.
+- Your own photo: pick one from the gallery in the settings sheet
+  (`expo-image-picker`). It lasts for the session, it is not saved.
 - Flat: a flat `#2B2B2B` colour. The glass has nothing to bend, so it nearly
   disappears. That is the point of the option: glass refracts its backdrop,
   and over a flat background it looks like a flat panel.
@@ -51,11 +58,18 @@ shows the tier the device actually rendered: `glass`, `refraction`, `blur`,
 - `src/components/LiquidGlassNavbar.tsx`: the bar and the droplet.
 - `src/components/BlurScrim.tsx`: a gradient of blur behind the bar, so
   scrolled content dissolves into blur instead of fading into a colour.
+- `src/components/SettingsSheet.tsx`: the settings sheet (sliders, toggles,
+  presets, background picker).
 - `src/context/NavScrollContext.tsx`: the scroll handler, shrink-on-scroll
   state, and the glass pause flag.
-- `src/screens/DemoScreen.tsx`: background switcher, tier readout, and
-  scrolling cards that pass under the bar.
-- `src/data/backgrounds.ts`: the background list.
+- `src/jelly/JellySpring.ts`: spring solver, rubber band, panel offset.
+- `src/jelly/useJellyMotion.ts`: the eleven-spring state machine and frame loop.
+- `src/settings/settings.ts`: every tweakable value, defaults, presets.
+- `src/settings/SettingsContext.tsx`: settings state plus the shared-value
+  mirror the jelly worklets read every frame.
+- `src/screens/DemoScreen.tsx`: background switcher, tier readout, scrolling
+  cards, settings gear.
+- `src/data/backgrounds.ts`: photos, colours, gradients.
 
 ## How it is tuned
 
@@ -147,6 +161,34 @@ What it does, in order of visibility:
 The scroll shrink is also jelly-flavoured: the bar only shrinks after 60 px
 of same-direction scroll, then eases over 300 ms on the standard curve
 `cubic-bezier(0.2, 0, 0, 1)`.
+
+## Settings
+
+Tap the gear in the demo header to open the settings sheet. Everything
+applies live while you drag it.
+
+- **Presets:** Water (the defaults), Calm, Bouncy, Prism. Any manual change
+  flips the preset label to Custom. Reset restores Water.
+- **Colour split:** the `iridescence` prop, bar and droplet separately. This
+  is the chromatic dispersion: light splitting into colours at the rim, hue
+  driven by the angle to the centre. 0.3 is already visible, the defaults are
+  0.25 on the bar and 0.35 on the droplet, deliberately light. Android only,
+  no effect on iOS.
+- **Glass:** thickness, blur, saturation, edge reflection, legibility veil,
+  bar and droplet separately.
+- **Springs:** stiffness and damping ratio for travel, squash, grow, bar
+  wobble, and panel lag. Damping 1.0 is critically damped, below 1.0 bounces.
+- **Bounce:** press grow, stretch and squash amounts, settle window, tap
+  distance.
+- **Bar shape:** width, height, corner radius, shrunk width and height.
+- **Effects:** toggles for touch glow, bar wobble, panel lag, squash and
+  stretch, plus glow strength.
+- **Background:** photos, colours, gradients, your own photo.
+
+Settings live in React state in `SettingsContext` and are mirrored into a
+single Reanimated shared value, so the jelly worklets read the current values
+every frame without re-rendering. Glass props are plain React props, so they
+update on re-render.
 
 ## Two rules that will save you a day
 
