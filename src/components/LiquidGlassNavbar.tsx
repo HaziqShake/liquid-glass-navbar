@@ -137,16 +137,17 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
 
   // ------------------------------------------------------------------
   // Shrink. A transform scale driven by `compact`, 1 at rest and the
-  // shrunk size while scrolling down. It pivots on the bar's centre, so
-  // the bar stays centred while it shrinks. This is a pure transform:
-  // the bar's layout size, and the glass view's layout size, never
-  // change. The pill is a child of the bar, so it is scaled by the same
-  // transform and resizes with the bar by construction. There is no
-  // separate layout to keep in sync, so it cannot drift. The ratios
-  // come from settings, the same numbers the old layout shrink used:
-  // width to shrunkWidthPct, height to shrunkHeight / barHeight.
+  // shrunk size while scrolling down. It is applied to the glass view
+  // itself, which has explicit width and height, so the pivot is
+  // definitely the bar's centre: translate to the centre, scale,
+  // translate back. The bar stays centred while it shrinks. This is a
+  // pure transform: the bar's layout size never changes. The pill is a
+  // child of the bar, so it is scaled by the same transform and
+  // resizes with the bar by construction. The ratios come from
+  // settings: width to shrunkWidthPct, height to shrunkHeight /
+  // barHeight.
   // ------------------------------------------------------------------
-  const shrinkStyle = useAnimatedStyle(() => {
+  const barShrinkStyle = useAnimatedStyle(() => {
     const cfg = settingsShared.value;
     const sx = interpolate(compact.value, [0, 1], [1, cfg.shrunkWidthPct]);
     const sy = interpolate(compact.value, [0, 1], [1, cfg.shrunkHeight / cfg.barHeight]);
@@ -301,35 +302,41 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
       <BlurScrim edge="bottom" height={170} />
       <Animated.View style={trackStyle} pointerEvents="box-none">
         <Animated.View style={panelStyle} pointerEvents="box-none">
-          <Animated.View style={shrinkStyle} pointerEvents="box-none">
-            <GestureDetector gesture={pan}>
-              <AnimatedLiquidGlassView
-                variant="clear"
-                thickness={settings.barThickness}
-                blurRadius={settings.barBlur}
-                // No dispersion anywhere: iridescence is the artificial
-                // rainbow rim, and it is off.
-                iridescence={0}
-                saturation={settings.saturation}
-                edgeReflectionStrength={settings.barEdgeReflection}
-                legibilityFloor={settings.legibilityFloor}
-                interactive
-                // No `paused` prop, on purpose. The glass captures live,
-                // every frame, including while scrolling. That is the fix
-                // for the frozen screenshot blur. The old code paused the
-                // capture during every scroll, so the bar held a stale
-                // frame exactly when the backdrop was moving, which is
-                // why it felt like a screenshot. Pausing is gone because
-                // the crash it was guarding against is gone too: the bar
-                // no longer resizes its layout, so there is no
-                // resize-while-capturing to guard against.
-                borderRadius={settings.barRadius}
-                onPipelineReady={(e) => onTier?.(e.nativeEvent.tier)}
-                onError={(e) => console.warn('[glass] bar error', e.nativeEvent)}
-                style={[
-                  styles.navContainer,
-                  { width: navWidth, height: navHeight, borderRadius: settings.barRadius },
-                ]}>
+          <GestureDetector gesture={pan}>
+            <AnimatedLiquidGlassView
+              variant="clear"
+              thickness={settings.barThickness}
+              blurRadius={settings.barBlur}
+              // No dispersion anywhere: iridescence is the artificial
+              // rainbow rim, and it is off.
+              iridescence={0}
+              saturation={settings.saturation}
+              edgeReflectionStrength={settings.barEdgeReflection}
+              legibilityFloor={settings.legibilityFloor}
+              // No `interactive` prop. It made the glass view handle
+              // touches itself for a specular bloom, on top of the Pan
+              // gesture that already owns touches on the bar. The tab
+              // switch crash has survived every other fix, and this is
+              // the one remaining native touch path on the bar, so it
+              // is off until the crash is proven gone. The Pan gesture
+              // still drives the pill and the tap.
+              // No `paused` prop, on purpose. The glass captures live,
+              // every frame, including while scrolling. That is the fix
+              // for the frozen screenshot blur. The old code paused the
+              // capture during every scroll, so the bar held a stale
+              // frame exactly when the backdrop was moving, which is
+              // why it felt like a screenshot. Pausing is gone because
+              // the crash it was guarding against is gone too: the bar
+              // no longer resizes its layout, so there is no
+              // resize-while-capturing to guard against.
+              borderRadius={settings.barRadius}
+              onPipelineReady={(e) => onTier?.(e.nativeEvent.tier)}
+              onError={(e) => console.warn('[glass] bar error', e.nativeEvent)}
+              style={[
+                styles.navContainer,
+                { width: navWidth, height: navHeight, borderRadius: settings.barRadius },
+                barShrinkStyle,
+              ]}>
                 {/* Tab icons and labels. They live in the bar. The pill
                     is drawn on top of them, below. */}
                 <View style={styles.iconRow}>
@@ -382,7 +389,6 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
                 )}
               </AnimatedLiquidGlassView>
             </GestureDetector>
-          </Animated.View>
         </Animated.View>
       </Animated.View>
     </Animated.View>
