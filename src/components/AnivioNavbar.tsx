@@ -136,9 +136,13 @@ const INACTIVE_ICON_COLOR = 'rgba(255,255,255,0.65)';
 const PILL_FILL = 'rgba(255,255,255,0.15)';
 const BAR_FILL_BASE = '28,28,30';
 
-/** True when the native AGSL refraction view can run (Android API 33+). */
-const HAS_REFRACTION =
-  Platform.OS === 'android' && typeof Platform.Version === 'number' && Platform.Version >= 33;
+/** True when the native AGSL refraction view can run (Android API 33+).
+ * DISABLED 10 Nov 2026: the liquid-glass-refraction native module is not
+ * autolinking (expo prebuild does not include it, so its ViewManager is
+ * never registered and the app crashes with IllegalViewOperationException
+ * when the RefractionView renders). Falls back to the fill View until the
+ * module registration is fixed. */
+const HAS_REFRACTION = false;
 
 interface AnivioNavbarProps {
   tabs: TabItem[];
