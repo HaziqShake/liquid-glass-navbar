@@ -13,47 +13,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
 import { X, ImageSquare } from 'phosphor-react-native';
-import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { useNavbarSettings } from '../settings/SettingsContext';
 import {
   PRESETS,
   SETTINGS_SECTIONS,
   type ControlDef,
 } from '../settings/settings';
-import {
-  BACKGROUNDS,
-  BACKGROUND_COLORS,
-  BACKGROUND_GRADIENTS,
-  type DemoBackground,
-} from '../data/backgrounds';
+import { BACKGROUNDS } from '../data/backgrounds';
 
 function formatValue(step: number, value: number): string {
   if (step >= 1) return `${Math.round(value)}`;
   if (step >= 0.1) return value.toFixed(1);
   if (step >= 0.01) return value.toFixed(2);
   return value.toFixed(3);
-}
-
-function GradientSwatch({ bg, size }: { bg: DemoBackground; size: number }) {
-  const colors = bg.colors ?? ['#000000', '#FFFFFF'];
-  return (
-    <Svg width={size} height={size * 0.7}>
-      <Defs>
-        <LinearGradient id={`grad-${bg.id}`} x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor={colors[0]} />
-          <Stop offset="1" stopColor={colors[1]} />
-        </LinearGradient>
-      </Defs>
-      <Rect
-        x="0"
-        y="0"
-        width={size}
-        height={size * 0.7}
-        rx={10}
-        fill={`url(#grad-${bg.id})`}
-      />
-    </Svg>
-  );
 }
 
 export interface SettingsSheetProps {
@@ -202,7 +174,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   />
                 </TouchableOpacity>
               )}
-              {BACKGROUNDS.filter((b) => b.kind === 'image').map((b) => (
+              {BACKGROUNDS.map((b) => (
                 <TouchableOpacity
                   key={b.id}
                   onPress={() => setBackgroundId(b.id)}
@@ -218,42 +190,6 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                 </TouchableOpacity>
               ))}
             </ScrollView>
-
-            <Text style={styles.subLabel}>Colours</Text>
-            <View style={styles.swatchRow}>
-              {BACKGROUND_COLORS.map((b) => (
-                <TouchableOpacity
-                  key={b.id}
-                  onPress={() => setBackgroundId(b.id)}
-                  activeOpacity={0.7}
-                >
-                  <View
-                    style={[
-                      styles.colorSwatch,
-                      { backgroundColor: b.color },
-                      backgroundId === b.id && styles.swatchActive,
-                    ]}
-                  />
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.subLabel}>Gradients</Text>
-            <View style={styles.swatchRow}>
-              {BACKGROUND_GRADIENTS.map((b) => (
-                <TouchableOpacity
-                  key={b.id}
-                  onPress={() => setBackgroundId(b.id)}
-                  activeOpacity={0.7}
-                >
-                  <View
-                    style={backgroundId === b.id && styles.swatchActiveWrap}
-                  >
-                    <GradientSwatch bg={b} size={56} />
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
 
             <TouchableOpacity
               style={styles.photoButton}
@@ -392,26 +328,6 @@ const styles = StyleSheet.create({
   },
   thumbActive: {
     borderColor: '#22C55E',
-  },
-  swatchRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  colorSwatch: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  swatchActive: {
-    borderColor: '#22C55E',
-  },
-  swatchActiveWrap: {
-    borderWidth: 2,
-    borderColor: '#22C55E',
-    borderRadius: 12,
   },
   photoButton: {
     flexDirection: 'row',

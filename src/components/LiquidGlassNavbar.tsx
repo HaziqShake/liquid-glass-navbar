@@ -266,6 +266,17 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
   const activeColor = '#FFFFFF';
   const inactiveColor = 'rgba(255, 255, 255, 0.65)';
 
+  // The icon that rides inside the droplet. It has to be a child of the
+  // droplet glass view: the shared backdrop capture skips every glass view
+  // and its children, so an icon that only lives in the bar is never in the
+  // backdrop the droplet samples, and the droplet's own surface paints over
+  // it. As a child of the droplet it draws on top of the glass, so it is
+  // always visible, and it travels and squashes with the lens.
+  const ActiveIconComp =
+    activeIndex >= 0
+      ? ICON_MAP[items[activeIndex].icon] || CircleNotch
+      : CircleNotch;
+
   // Tapping any tab pops a shrunk bar back open, then navigates. The pill
   // springs there with a press pulse (jelly select).
   const handlePress = (route: string) => {
@@ -415,7 +426,11 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
                   borderRadius={99}
                   onError={(e) => console.warn('[glass] droplet error', e.nativeEvent)}
                   style={[styles.droplet, dropletStyle]}
-                />
+                >
+                  <View pointerEvents="none" style={styles.dropletIcon}>
+                    <ActiveIconComp size={22} color={activeColor} weight="fill" />
+                  </View>
+                </AnimatedLiquidGlassView>
               </GestureDetector>
             </Animated.View>
           )}
@@ -445,6 +460,11 @@ const styles = StyleSheet.create({
   droplet: {
     position: 'absolute',
     borderRadius: 99,
+  },
+  dropletIcon: {
+    ...StyleSheet.absoluteFill,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   glow: {
     position: 'absolute',

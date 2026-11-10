@@ -11,7 +11,6 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GlassTier } from 'react-native-liquid-glassmorphism';
 import { Gear } from 'phosphor-react-native';
-import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { useNavScroll } from '../context/NavScrollContext';
 import { useNavbarSettings } from '../settings/SettingsContext';
 import { LiquidGlassNavbar, NavItem } from '../components/LiquidGlassNavbar';
@@ -32,12 +31,12 @@ const CARDS = [
   { title: 'Tweak it', body: 'Tap the gear up top to open settings: colour split, glass, springs, bounce, bar shape, background. Everything applies live.' },
   { title: 'Touch and drag', body: 'Touch the droplet and drag, no long-press needed. The pill follows your finger, grows to 1.3x while held, and settles with a wobble once it is nearly home.' },
   { title: 'Squash and stretch', body: 'The droplet elongates in its direction of travel, up to 25 percent longer, and squashes up to 20 percent vertically, both proportional to speed.' },
-  { title: 'Colour split', body: 'White light breaks into red and blue at the rim. The dispersion sliders in settings control how strong it is, 0.3 is already visible. Try it on the White background.' },
+  { title: 'Colour split', body: 'White light breaks into red and blue at the rim. The dispersion sliders in settings control how strong it is, 0.3 is already visible. Try it on the Lake background, the bright sky shows it best.' },
   { title: 'Specular rim', body: 'Light comes from the top. The edge reflection is soft on purpose, 0.35 on the bar, 0.5 on the droplet.' },
   { title: 'Legibility veil', body: 'A faint adaptive veil sits under the icons so they stay readable over clear glass, even on bright photos.' },
   { title: 'Blur scrim', body: 'Behind the bar the content dissolves into a gradient of blur, not a background-colour fade.' },
-  { title: 'Pause while scrolling', body: 'Glass capture pauses on drag and momentum, then resumes. That is what keeps Android from crashing.' },
-  { title: 'Try the Flat background', body: 'Switch to Flat and the glass nearly vanishes. Flat colour gives refraction nothing to bend.' },
+  { title: 'Pause while scrolling', body: 'Glass capture pauses on drag, on momentum, and while the bar expands after a tap, then resumes. That is what keeps Android from crashing.' },
+  { title: 'Photos, cropped for the bar', body: 'Every photo is cropped to phone portrait, so the bar sits over real detail and colour at the bottom of the frame. That bottom band is what the glass bends. Flat colours and gradients are gone, the glass gets its colours from the photo.' },
   { title: 'Tier readout', body: 'The pill above shows the rendering tier this device actually used: glass, refraction, blur, tint or none.' },
   { title: 'One bar, one droplet', body: 'Only two glass surfaces exist here. Glass is the most expensive thing on screen, keep the count low.' },
   { title: 'Real build only', body: 'This is a native module. It needs a development build and never works in Expo Go.' },
@@ -65,27 +64,7 @@ export const DemoScreen: React.FC = () => {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" />
-      {bg.kind === 'image' && bg.source ? (
-        <Image source={bg.source} style={StyleSheet.absoluteFill} resizeMode="cover" />
-      ) : bg.kind === 'gradient' && bg.colors ? (
-        <Svg
-          style={StyleSheet.absoluteFill}
-          width="100%"
-          height="100%"
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-        >
-          <Defs>
-            <LinearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor={bg.colors[0]} />
-              <Stop offset="1" stopColor={bg.colors[1]} />
-            </LinearGradient>
-          </Defs>
-          <Rect x="0" y="0" width="100" height="100" fill="url(#bgGrad)" />
-        </Svg>
-      ) : (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: bg.color ?? '#0F0F0F' }]} />
-      )}
+      <Image source={bg.source} style={StyleSheet.absoluteFill} resizeMode="cover" />
 
       <Animated.ScrollView
         onScroll={scrollHandler}

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   useSharedValue,
   useAnimatedScrollHandler,
@@ -35,7 +35,22 @@ export const NavScrollProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Pause liquid-glass capture while scrolling: the Android backdrop-capture
   // pipeline crashes when a visible glass view captures during scroll.
   // The glass holds its last frame while paused and re-captures on resume.
-  const [glassPaused, setGlassPaused] = useState(false);
+  // Two sources feed the pause, OR-ed together: scrolling, and the bar
+  // expanding after a tab tap. The expand animates the bar's width/height
+  // (and the droplet layer's), which is the same resize-while-capturing
+  // crash as scrolling, so it must be paused too. The scroll flag guards
+  // the expand timer: if the user scrolls during the expand window, the
+  // glass stays paused until the scroll ends as well.
+  const [scrollPaused, setScrollPaused] = useState(false);
+  const [expandPaused, setExpandPaused] = useState(false);
+  const glassPaused = scrollPaused || expandPaused;
+  const expandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (expandTimer.current) clearTimeout(expandTimer.current);
+    };
+  }, []);
 
   // The navbar stays docked at the bottom at all times. Scrolling does not
   // move the bar away; instead the bar shrinks and its labels fade out while
@@ -43,21 +58,21 @@ export const NavScrollProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const scrollHandler = useAnimatedScrollHandler({
     onBeginDrag: () => {
       'worklet';
-      runOnJS(setGlassPaused)(true);
+      runOnJS(setScrollPaused)(true);
     },
     onMomentumBegin: () => {
       'worklet';
-      runOnJS(setGlassPaused)(true);
+      runOnJS(setScrollPaused)(true);
     },
     onEndDrag: () => {
       'worklet';
       // If momentum follows, onMomentumBegin re-pauses immediately,
       // a single resumed frame is harmless (crash needs sustained capture)
-      runOnJS(setGlassPaused)(false);
+      runOnJS(setScrollPaused)(false);
     },
     onMomentumEnd: () => {
       'worklet';
-      runOnJS(setGlassPaused)(false);
+      runOnJS(setScrollPaused)(false);
     },
     onScroll: (event) => {
       'worklet';
@@ -106,7 +121,11 @@ export const NavScrollProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   };
 
-  // Pop the bar back open when the user taps a tab while it is shrunk
+  // Pop the bar back open when the user taps a tab while it is shrunk.
+  // The expand resizes the bar (and the droplet layer) over 250 ms, so the
+  // glass is paused for the whole resize, exactly like scrolling: a live
+  // capture during a resize is what crashes Android. Resume at 320 ms,
+  // just after the animation lands, and the glass re-captures fresh.
   const expandNavbar = () => {
     if (compactTarget.value !== 0) {
       compactTarget.value = 0;
@@ -114,6 +133,9 @@ export const NavScrollProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         duration: 250,
         easing: Easing.out(Easing.quad),
       });
+      setExpandPaused(true);
+      if (expandTimer.current) clearTimeout(expandTimer.current);
+      expandTimer.current = setTimeout(() => setExpandPaused(false), 320);
     }
   };
 

@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-liquid-glassmorphism/android/src/main/java/com/liquidglassmorphism/LiquidGlassmorphismView.kt b/node_modules/react-native-liquid-glassmorphism/android/src/main/java/com/liquidglassmorphism/LiquidGlassmorphismView.kt
+index d9b48da..a2c82cc 100644
+--- a/node_modules/react-native-liquid-glassmorphism/android/src/main/java/com/liquidglassmorphism/LiquidGlassmorphismView.kt
++++ b/node_modules/react-native-liquid-glassmorphism/android/src/main/java/com/liquidglassmorphism/LiquidGlassmorphismView.kt
+@@ -216,7 +216,7 @@ open class LiquidGlassmorphismView(context: Context) : ReactViewGroup(context),
+ 
+   // Downscale for the captured backdrop: cheaper to draw and pre-softens the
+   // blur. 2 keeps enough detail for vibrancy to read (larger factors looked muddy).
+-  private val captureScale = 2
++  private val captureScale = 1
+ 
+   // Compiled once and reused; recompiling per frame would stutter. Null on
+   // < API 33 or if the AGSL fails to compile (→ Canvas fallback).
