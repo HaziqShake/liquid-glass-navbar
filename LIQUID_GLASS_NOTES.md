@@ -54,22 +54,6 @@ Haziq wants the glass close to iOS 27's default.
 ## Edge lighting (Haziq, 10 Nov)
 The glass edge catches light on the **top left** and falls to **shadow on the bottom right**. Directional light. The top-left edge is bright/highlighted, the bottom-right edge is darker/shadowed. This is what gives the glass its depth and makes it read as a physical object with a light source.
 
-### The edge lighting game (10 Nov, image-6.png)
-Haziq sent a dark glass navbar screenshot and asked where the edge lighting is. The answer: the edge lighting is on the top and the bottom, exactly opposite each other. The top edge has a thin, bright white rim (strongest at the top-left and top-right corners). The bottom edge glows green, because the green light source below the bar catches the bottom rim. Same thin line, opposite sides, different colour because the light sources differ. The left and right edges are dark, no light there.
-
-### Liquid glass reacts with the colour around it (Haziq, 10 Nov)
-Liquid glass does not only bend its background colour (refraction). It also REACTS with the colour around it. Ambient light and nearby colours tint the glass and its edges. In the screenshot (image-6.png), the green glow below the bar makes the bottom edge glow green and tints the glass, it does not stay neutral white. The glass picks up the dominant ambient colour. This is the same as OriginOS's "light harvesting" (the curved borders catch dominant tones from the surroundings). So the edge light should not always be white; it should pick up the ambient/background colour. And the glass tint should react to its surroundings, not stay a fixed neutral.
-
-### Instagram / App Store navbar (image-7.png, 10 Nov)
-- Two glass navbars (Instagram and App Store) over a light background with a glowing shape behind.
-- The droplet (pill) has refraction too, and it is CLEARER than the navbar's refraction.
-- The droplet COLOURS whatever icon it touches, but only the part under the droplet. It does not turn completely blue itself; whatever part of the icon is under the droplet is the one that gets coloured blue. The rest of the icon stays its normal colour. This is a selective colour fill, the droplet fills the icon with colour where they overlap.
-- The navbar has a legibility veil and a frostier blur compared to the droplet, which is completely clear. But the navbar still has refraction too, just frostier and less clear than the droplet.
-- The droplet only refracts when you HOLD it, not always.
-- Tapping does not increase the navbar size, but holding does.
-- When the droplet approaches an icon, it enlarges, and that enlargement must be SMOOTH, not instant.
-- The touch glow belongs INSIDE the navbar, not outside it.
-
 ## What NOT to do
 - Do not make it a frosted panel (heavy blur + tint, no refraction). That is not liquid glass.
 - Do not use a software backdrop capture (drawing the root view into a bitmap). That is what caused the freeze, lag, and crashes in the earlier builds.
@@ -114,18 +98,3 @@ The only true refraction path on Android is a custom native module using Android
 - https://nokiapoweruser.com/originos-7-liquid-glass-widgets-complete-overview/
 - https://nokiapoweruser.com/originos-7-light-shadow-aesthetics-guide/
 - https://nokiapoweruser.com/originos-7-internal-beta-experience/
-
-## 10 changes from Haziq (10 Nov, image-7.png: Instagram + App Store glass navbars)
-
-Implemented in the repo, uncommitted, no build yet (build gate: only on his command).
-
-1. **Dark / light mode.** A `mode` setting ('dark' | 'light'). Dark: dark fill + white icons. Light: light fill + dark icons. Blur and refraction work the same in both; the refraction shader's tint colour follows the mode via a new `tintColor` uniform (`[28/255,28/255,30/255]` dark, `[1,1,1]` light). Pill, icons, edge light and veil all adapt.
-2. **Better test photos.** 9 backgrounds now (4 kept + 5 new): abstract paint (strong colour), sharp architecture (hard edges), vivid sunset field, bright beach (light-mode test), neon city night (dark, coloured lights). All 1080x2400 local files. Each background has an `accent` (dominant colour) for the ambient edge light.
-3. **Legibility veil.** A `legibilityVeil` setting (default 0.25). An adaptive veil under the icons: dark translucent in dark mode, light translucent in light mode. Sits between the glass surface and the icons; never touches blur or refraction.
-4. **Refraction / blur, no colours.** Refraction (native AGSL) and blur kept as-is. NO colour effects added to the refraction. The ambient-colour reaction is applied to the EDGE LIGHT only: the edge stroke is tinted with the background photo's accent colour instead of always white. Edge light stays thin (1px) and exactly opposite (top-left / bottom-right).
-5. **Droplet colour fill (now).** The part of an icon under the droplet turns blue, ONLY that part. Implemented as a second icon row in blue, clipped to the droplet's bounds (a container exactly the pill's size, overflow hidden, tracking the pill's translateX). The droplet itself stays translucent and does NOT turn blue. NO refraction on the droplet yet.
-6. **Glow inside the bar.** The touch glow moved from the pill overlay (overflow visible, leaked outside) into the bar's overflow-hidden container, so it is clipped to the pill shape and can never render outside the bar.
-7. **Smooth droplet enlargement.** As the droplet approaches a tab it grows gradually: `approachScale` = 1 + 0.15 * proximity, where proximity is 1 on a tab centre and 0 halfway between tabs, driven by the spring-smoothed position. Never snaps.
-8. **Droplet refraction only when held (deferred).** The droplet has NO refraction yet. When added, it must be active ONLY while held. Recorded in code as an `isHeld` derived value (holdPress > 0.5) that gates it. The navbar's own refraction stays always-on.
-9. **Tap does not grow the bar; hold does.** The bar's ~6% growth now reads `holdPress` (1 only when the press is sustained > 150ms or dragged > 4dp), not `press`. A quick tap never grows the bar. `press` still drives the icon/pill feedback on tap.
-10. **Droplet clearer than navbar; navbar frostier.** Navbar blur default raised 80 -> 90 and the legibility veil added (frostier). The droplet is completely clear (no blur, no veil, just translucent fill + colour fill). When droplet refraction is added later it must be clearer than the navbar's.

@@ -76,14 +76,6 @@ export interface JellyFrame {
   contentScale: number;
   /** The press spring, 0..1. 1 while the droplet is held. The bar grows with it. */
   press: number;
-  /** 0..1. 1 ONLY while the droplet is HELD (press sustained > 150ms or
-   *  a drag). A quick tap never raises it, so the BAR grows on hold only,
-   *  never on tap. `press` still drives the icon/pill feedback on tap. */
-  holdPress: number;
-  /** Smooth enlargement as the droplet approaches a tab: 1 halfway
-   *  between tabs, growing to 1.15 when centred on a tab. Driven by the
-   *  (spring-smoothed) position, so it never snaps or jumps. */
-  approachScale: number;
   panelOffset: number;
   trackScale: number;
   trackScaleX: number;
@@ -108,12 +100,6 @@ interface MotionState {
   velocityVel: number;
   press: number;
   pressVel: number;
-  /** Hold-only press (0..1), for the bar growth. See holdPress in JellyFrame. */
-  holdPress: number;
-  holdPressVel: number;
-  /** Seconds the current press has been sustained (accumulates while
-   *  dragging; reset on release). A tap ends before 150ms. */
-  holdTime: number;
   scaleX: number;
   scaleXVel: number;
   scaleY: number;
@@ -165,21 +151,12 @@ function publishFrame(s: MotionState, frame: SharedValue<JellyFrame>): void {
   const speed = s.velocity / 10;
   const sx = Math.min(Math.max(speed * 0.75, -0.2), 0.2);
   const sy = Math.min(Math.max(speed * 0.25, -0.2), 0.2);
-  // Smooth approach scale: the droplet grows as it nears a tab centre.
-  // dist is 0 on a tab, 0.5 halfway; proximity is 1 on a tab, 0 halfway.
-  // position is spring-smoothed, so this grows gradually and never snaps.
-  const nearest = Math.round(s.position);
-  const dist = Math.abs(s.position - nearest);
-  const proximity = Math.min(Math.max(1 - dist * 2, 0), 1);
-  const approachScale = 1 + 0.15 * proximity;
   frame.value = {
     position: s.position,
-    pillScaleX: (s.scaleX / (1 - sx)) * approachScale,
-    pillScaleY: s.scaleY * (1 - sy) * approachScale,
+    pillScaleX: s.scaleX / (1 - sx),
+    pillScaleY: s.scaleY * (1 - sy),
     contentScale: 1 + 0.2 * s.press,
     press: s.press,
-    holdPress: s.holdPress,
-    approachScale,
     panelOffset: jellyPanelOffset(s.panel, s.width),
     trackScale: s.trackPress,
     trackScaleX: s.trackX,
@@ -224,9 +201,6 @@ export function useJellyMotion(
     velocityVel: 0,
     press: 0,
     pressVel: 0,
-    holdPress: 0,
-    holdPressVel: 0,
-    holdTime: 0,
     scaleX: 1,
     scaleXVel: 0,
     scaleY: 1,
@@ -265,8 +239,6 @@ export function useJellyMotion(
     pillScaleY: 1,
     contentScale: 1,
     press: 0,
-    holdPress: 0,
-    approachScale: 1,
     panelOffset: 0,
     trackScale: 1,
     trackScaleX: 1,
@@ -460,21 +432,6 @@ export function useJellyMotion(
       s.press = r.value;
       s.pressVel = r.velocity;
 
-      // Hold-only bar growth. Accumulate how long the press has been
-      // sustained; the bar grows only when held (> 150ms) or dragged
-      // (moved > 4dp). A quick tap ends before the threshold, so the bar
-      // never grows on tap. `press` (above) still drives the icon/pill
-      // feedback on tap; only the BAR growth is gated on hold.
-      if (s.dragging) {
-        s.holdTime += dt;
-      } else {
-        s.holdTime = 0;
-      }
-      const holdTarget = s.dragging && (s.holdTime > 0.15 || s.movedDistance > 4) ? 1 : 0;
-      r = advanceSpring(s.holdPress, s.holdPressVel, holdTarget, dt, 1000 * ss, 1.0 * ds);
-      s.holdPress = r.value;
-      s.holdPressVel = r.velocity;
-
       r = advanceSpring(s.scaleX, s.scaleXVel, s.shapeTarget, dt, 250 * ss, 0.6 * ds);
       s.scaleX = r.value;
       s.scaleXVel = r.velocity;
@@ -525,7 +482,6 @@ export function useJellyMotion(
         !springIsAtRest(s.position, s.positionVel, s.target) ||
         !springIsAtRest(s.velocity, s.velocityVel, 0) ||
         !springIsAtRest(s.press, s.pressVel, 0) ||
-        !springIsAtRest(s.holdPress, s.holdPressVel, 0) ||
         !springIsAtRest(s.scaleX, s.scaleXVel, 1) ||
         !springIsAtRest(s.scaleY, s.scaleYVel, 1) ||
         !springIsAtRest(s.panel, s.panelVel, 0) ||

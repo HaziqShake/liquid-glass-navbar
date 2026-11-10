@@ -46,27 +46,6 @@ export function SettingsSheet({
         </Pressable>
       </View>
 
-      {/* Navbar mode: dark / light. Dark: dark fill + white icons.
-          Light: light fill + dark icons. The blur and refraction work the
-          same in both; the pill, icons, edge light and veil all adapt. */}
-      <Text style={styles.sectionLabel}>Mode</Text>
-      <View style={styles.chips}>
-        {(['dark', 'light'] as const).map((mode) => {
-          const selected = settings.mode === mode;
-          return (
-            <Pressable
-              key={mode}
-              style={[styles.chip, selected && styles.chipSelected]}
-              onPress={() => set({ mode })}
-            >
-              <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                {mode === 'dark' ? 'Dark' : 'Light'}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
       <Row label="Blur" value={String(Math.round(settings.barBlur))} />
       <Slider
         style={styles.slider}
@@ -88,24 +67,6 @@ export function SettingsSheet({
         step={0.01}
         value={settings.fillOpacity}
         onValueChange={(v) => set({ fillOpacity: v })}
-        minimumTrackTintColor="#FFFFFF"
-        maximumTrackTintColor="rgba(255,255,255,0.3)"
-        thumbTintColor="#FFFFFF"
-      />
-
-      {/* Legibility veil: an adaptive veil under the icons so they stay
-          readable over clear glass. Dark mode: a dark translucent layer.
-          Light mode: a light translucent layer. The navbar is frostier
-          than the droplet (which is completely clear); this veil plus the
-          stronger blur is what makes it so. */}
-      <Row label="Legibility veil" value={settings.legibilityVeil.toFixed(2)} />
-      <Slider
-        style={styles.slider}
-        minimumValue={0}
-        maximumValue={1}
-        step={0.01}
-        value={settings.legibilityVeil}
-        onValueChange={(v) => set({ legibilityVeil: v })}
         minimumTrackTintColor="#FFFFFF"
         maximumTrackTintColor="rgba(255,255,255,0.3)"
         thumbTintColor="#FFFFFF"

@@ -37,18 +37,10 @@ class RefractionView(context: Context, appContext: AppContext) : View(context) {
 
     const val DEFAULT_GLOW_STRENGTH = 1.0f
     const val DEFAULT_TINT_MIX = 0.30f
-    // Default tint colour (dark #1C1C1E), as linear 0..1 floats.
-    val DEFAULT_TINT_COLOR = floatArrayOf(28f / 255f, 28f / 255f, 30f / 255f)
   }
 
   private var glowStrength: Float = DEFAULT_GLOW_STRENGTH
   private var tintMix: Float = DEFAULT_TINT_MIX
-  // Tint colour mixed into the sampled backdrop. Dark mode uses the
-  // dark #1C1C1E above; light mode passes white (1,1,1) so the
-  // refraction mixes a light tint instead of darkening the bar.
-  // No colour effects are added here; this only makes the existing
-  // surface tint follow the navbar mode.
-  private var tintColor: FloatArray = DEFAULT_TINT_COLOR.copyOf()
 
   // Compiled once. RuntimeShader (AGSL) requires API 33+.
   private val shader: RuntimeShader? =
@@ -74,12 +66,6 @@ class RefractionView(context: Context, appContext: AppContext) : View(context) {
   fun setTintMix(value: Float) {
     if (tintMix == value) return
     tintMix = value
-    updateUniforms()
-  }
-
-  fun setTintColor(r: Float, g: Float, b: Float) {
-    if (tintColor[0] == r && tintColor[1] == g && tintColor[2] == b) return
-    tintColor = floatArrayOf(r, g, b)
     updateUniforms()
   }
 
@@ -111,7 +97,6 @@ class RefractionView(context: Context, appContext: AppContext) : View(context) {
     shader.setFloatUniform("outset", OUTSET_DP * density)
     shader.setFloatUniform("glowStrength", glowStrength)
     shader.setFloatUniform("tintMix", tintMix)
-    shader.setFloatUniform("tintColor", tintColor[0], tintColor[1], tintColor[2])
   }
 
   private fun applyEffect() {
@@ -133,7 +118,6 @@ uniform float density;
 uniform float outset;
 uniform float glowStrength;
 uniform float tintMix;
-uniform half3 tintColor;
 
 half3 sampleLight(float2 position, float2 tangent) {
     float2 spread = tangent * density * 10.0;
@@ -154,7 +138,7 @@ half4 main(float2 position) {
     float2 normal = float2(capsule.x * sign(local.x), capsule.y) / max(distanceToCenter, 0.001);
     float2 tangent = float2(-normal.y, normal.x);
     float depth = max(-distanceToEdge, 0.0) / density;
-    half3 surface = mix(backdrop.eval(position).rgb, tintColor, tintMix);
+    half3 surface = mix(backdrop.eval(position).rgb, half3(28.0, 28.0, 30.0) / 255.0, tintMix);
     if (depth >= 16.0 || glowStrength <= 0.0) return half4(surface * coverage, coverage);
     float rim = exp(-0.0565 * depth - 0.0322 * depth * depth);
     float upperLight = 0.18 + 0.82 * pow(max(-normal.y, 0.0), 0.65);

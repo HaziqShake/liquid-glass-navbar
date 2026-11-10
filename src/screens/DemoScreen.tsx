@@ -44,12 +44,9 @@ const CARDS = [
   { title: 'Jelly Springs', body: 'Eleven coupled springs. The pill stretches as it travels and settles with a wobble.' },
   { title: 'Live Blur', body: 'The bar blurs whatever is behind it, live, as the list scrolls.' },
   { title: 'Drag the Bar', body: 'Press and drag across the bar. The pill follows your finger and snaps to the nearest tab.' },
-  { title: 'Tap a Tab', body: 'A tap under 4dp picks the tab under your finger. A longer drag picks the nearest tab. A tap moves the droplet but never grows the bar.' },
-  { title: 'Hold to Grow', body: 'Press and HOLD the droplet and the bar grows ~6%. A quick tap does not grow it.' },
-  { title: 'Droplet Colour', body: 'The part of an icon under the droplet turns blue. Only that part; the droplet itself stays clear.' },
-  { title: 'Dark / Light', body: 'Switch the mode in Settings. Light mode: white glass, dark icons, same blur and refraction.' },
+  { title: 'Tap a Tab', body: 'A tap under 4dp picks the tab under your finger. A longer drag picks the nearest tab.' },
   { title: 'Scroll to Shrink', body: 'Scroll down and the labels collapse and the bar shrinks. Scroll up to bring them back.' },
-  { title: 'Edge Light', body: 'The rim catches the background colour at the top-left and bottom-right, exactly opposite.' },
+  { title: 'Edge Light', body: 'The rim catches light at the top-left and falls to shadow at the bottom-right.' },
   { title: 'iOS 27 Default', body: 'Moderate tint. Not crystal clear, not heavily tinted. The photo stays visible through the glass.' },
   { title: 'Anivio', body: "Tahseen's navbar, translated to Expo React Native. No capture library, no frozen frames." },
 ];
@@ -157,7 +154,6 @@ export function DemoScreen(): React.JSX.Element {
         blurTarget={blurTargetRef}
         settings={settings}
         springScales={springScales}
-        accentColor={background.accent}
       />
 
       {showSettings ? (

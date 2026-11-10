@@ -26,14 +26,8 @@ import type { ViewStyle } from 'react-native';
 export type RefractionViewProps = {
   /** Strength of the rim sheen / highlight. Default 1.0. */
   glowStrength?: number;
-  /** Mix of the tint colour into the sampled backdrop. Default 0.30 (iOS 27 fill). */
+  /** Mix of the dark tint (rgb 28,28,30) into the sampled backdrop. Default 0.30 (iOS 27 fill). */
   tintMix?: number;
-  /** Tint colour mixed into the backdrop, as linear 0..1 [r, g, b].
-   *  Dark mode: [28/255, 28/255, 30/255] (dark #1C1C1E). Light mode:
-   *  [1, 1, 1] (white) so the refraction mixes a light tint. No colour
-   *  effects are added; this only makes the existing surface tint follow
-   *  the navbar mode. */
-  tintColor?: [number, number, number];
   style?: ViewStyle;
 };
 
