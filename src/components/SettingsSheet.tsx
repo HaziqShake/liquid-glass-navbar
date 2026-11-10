@@ -53,7 +53,17 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
     setBackgroundId,
     customPhotoUri,
     pickPhoto,
+    focusMode,
+    setFocusMode,
   } = useNavbarSettings();
+
+  // In focus mode the sheet lifts above the navbar so the bar stays
+  // visible while you tweak: bar height + bottom inset + a small gap.
+  // The bar never shrinks in focus mode (no scrollable content), so the
+  // full bar height is the right lift.
+  const sheetLift = focusMode
+    ? settings.barHeight + Math.max(insets.bottom, 12) + 16
+    : 0;
 
   const renderControl = (control: ControlDef) => {
     if (control.kind === 'toggle') {
@@ -101,10 +111,26 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
       transparent
       onRequestClose={onClose}
     >
-      <View style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <View
+        style={[
+          styles.backdrop,
+          focusMode && { backgroundColor: 'transparent' },
+        ]}
+        pointerEvents="box-none"
+      >
+        <Pressable
+          style={[
+            StyleSheet.absoluteFill,
+            focusMode && { bottom: sheetLift },
+          ]}
+          onPress={onClose}
+        />
         <View
-          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}
+          style={[
+            styles.sheet,
+            { paddingBottom: Math.max(insets.bottom, 16) },
+            focusMode && { marginBottom: sheetLift },
+          ]}
         >
           <View style={styles.handle} />
           <View style={styles.header}>
@@ -201,6 +227,22 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                 {customPhotoUri ? 'Choose a different photo' : 'Choose your own photo'}
               </Text>
             </TouchableOpacity>
+
+            <View style={styles.focusRow}>
+              <View style={styles.focusText}>
+                <Text style={styles.rowLabel}>Focus mode</Text>
+                <Text style={styles.sectionNote}>
+                  Hide the demo content and lift this sheet above the navbar,
+                  so the bar stays visible while you tweak.
+                </Text>
+              </View>
+              <Switch
+                value={focusMode}
+                onValueChange={setFocusMode}
+                trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#22C55E' }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
 
             {SETTINGS_SECTIONS.map((section) => (
               <View key={section.title}>
@@ -345,6 +387,17 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Medium',
     fontSize: 14,
     color: '#FFFFFF',
+  },
+  focusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 16,
+    paddingVertical: 4,
+  },
+  focusText: {
+    flex: 1,
   },
   row: {
     flexDirection: 'row',

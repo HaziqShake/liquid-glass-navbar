@@ -28,6 +28,14 @@ interface SettingsContextValue {
   customPhotoUri: string | null;
   /** Opens the photo library and uses the picked photo as the background. */
   pickPhoto: () => Promise<void>;
+  /**
+   * Focus mode: hides the demo content and lifts the settings sheet above
+   * the navbar, so the bar stays visible (and tappable) while you tweak.
+   * It is a UI mode, not a navbar property, so it lives outside
+   * `settings` and is untouched by presets and Reset.
+   */
+  focusMode: boolean;
+  setFocusMode: (v: boolean) => void;
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -40,6 +48,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({
   const settingsShared = useSharedValue<NavbarSettings>(DEFAULT_SETTINGS);
   const [backgroundId, setBackgroundId] = useState('mountain-lake');
   const [customPhotoUri, setCustomPhotoUri] = useState<string | null>(null);
+  const [focusMode, setFocusMode] = useState(false);
 
   useEffect(() => {
     settingsShared.value = settings;
@@ -89,6 +98,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({
         setBackgroundId,
         customPhotoUri,
         pickPhoto,
+        focusMode,
+        setFocusMode,
       }}
     >
       {children}

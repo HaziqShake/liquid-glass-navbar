@@ -45,7 +45,7 @@ const CARDS = [
 export const DemoScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { scrollHandler } = useNavScroll();
-  const { backgroundId, setBackgroundId, customPhotoUri } = useNavbarSettings();
+  const { backgroundId, setBackgroundId, customPhotoUri, focusMode } = useNavbarSettings();
   const [activeRoute, setActiveRoute] = useState('home');
   const [tier, setTier] = useState<GlassTier | null>(null);
   const [settingsVisible, setSettingsVisible] = useState(false);
@@ -66,6 +66,20 @@ export const DemoScreen: React.FC = () => {
       <StatusBar barStyle="light-content" />
       <Image source={bg.source} style={StyleSheet.absoluteFill} resizeMode="cover" />
 
+      {/* Focus mode: the demo content is hidden, only the background and
+          the navbar stay, so the bar is never covered while you tweak. The
+          small gear stays so the settings sheet can be reopened. */}
+      {focusMode && (
+        <TouchableOpacity
+          style={[styles.focusGear, { top: Math.max(insets.top, 16) + 8 }]}
+          onPress={() => setSettingsVisible(true)}
+          activeOpacity={0.7}
+        >
+          <Gear size={20} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
+
+      {!focusMode && (
       <Animated.ScrollView
         onScroll={scrollHandler}
         scrollEventThrottle={16}
@@ -117,6 +131,7 @@ export const DemoScreen: React.FC = () => {
           </View>
         ))}
       </Animated.ScrollView>
+      )}
 
       <LiquidGlassNavbar
         items={TABS}
@@ -179,6 +194,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  focusGear: {
+    position: 'absolute',
+    right: 20,
+    padding: 10,
+    borderRadius: 99,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    zIndex: 10,
   },
   sectionLabel: {
     fontFamily: 'Inter-Medium',
