@@ -6,14 +6,12 @@
  */
 
 export interface NavbarSettings {
-  // Colour split (chromatic dispersion at the rim)
-  barIridescence: number;
-  dropletIridescence: number;
   // Glass
   barThickness: number;
-  dropletThickness: number;
   barBlur: number;
   dropletBlur: number;
+  /** Subtle centre magnification of the droplet (Anivio-style clean lens). 1 samples the backdrop 1:1. */
+  dropletMagnification: number;
   saturation: number;
   barEdgeReflection: number;
   dropletEdgeReflection: number;
@@ -50,12 +48,10 @@ export interface NavbarSettings {
 }
 
 export const DEFAULT_SETTINGS: NavbarSettings = {
-  barIridescence: 0.25,
-  dropletIridescence: 0.35,
   barThickness: 0.75,
-  dropletThickness: 1.0,
   barBlur: 1,
   dropletBlur: 1,
+  dropletMagnification: 1.1,
   saturation: 0.8,
   barEdgeReflection: 0.35,
   dropletEdgeReflection: 0.5,
@@ -114,20 +110,12 @@ export interface SettingsSection {
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
-    title: 'Colour split',
-    note: 'Light splitting into colours at the rim. 0.3 is already visible, keep it low. Android only, does nothing on iOS.',
-    controls: [
-      { kind: 'slider', key: 'barIridescence', label: 'Bar dispersion', min: 0, max: 1, step: 0.05 },
-      { kind: 'slider', key: 'dropletIridescence', label: 'Droplet dispersion', min: 0, max: 1, step: 0.05 },
-    ],
-  },
-  {
     title: 'Glass',
     controls: [
       { kind: 'slider', key: 'barThickness', label: 'Bar thickness', min: 0.3, max: 2, step: 0.05 },
-      { kind: 'slider', key: 'dropletThickness', label: 'Droplet thickness', min: 0.3, max: 2, step: 0.05 },
       { kind: 'slider', key: 'barBlur', label: 'Bar blur', min: 0, max: 20, step: 1 },
       { kind: 'slider', key: 'dropletBlur', label: 'Droplet blur', min: 0, max: 20, step: 1 },
+      { kind: 'slider', key: 'dropletMagnification', label: 'Droplet magnification', min: 1, max: 1.5, step: 0.05 },
       { kind: 'slider', key: 'saturation', label: 'Saturation', min: 0, max: 1.5, step: 0.05 },
       { kind: 'slider', key: 'barEdgeReflection', label: 'Bar edge reflection', min: 0, max: 1, step: 0.05 },
       { kind: 'slider', key: 'dropletEdgeReflection', label: 'Droplet edge reflection', min: 0, max: 1, step: 0.05 },
@@ -200,8 +188,6 @@ export const PRESETS: Preset[] = [
       pressScale: 1.15,
       squashX: 0.5,
       squashY: 0.5,
-      barIridescence: 0.15,
-      dropletIridescence: 0.2,
     },
   },
   {
@@ -215,26 +201,6 @@ export const PRESETS: Preset[] = [
       pressScale: 1.45,
       squashX: 1.3,
       squashY: 1.3,
-      barIridescence: 0.5,
-      dropletIridescence: 0.55,
-    },
-  },
-  {
-    name: 'Prism',
-    settings: {
-      ...DEFAULT_SETTINGS,
-      barIridescence: 0.6,
-      dropletIridescence: 0.7,
-      barThickness: 1.0,
-      dropletThickness: 1.2,
-      positionDamping: 1.0,
-      velocityDamping: 1.0,
-      scaleXDamping: 1.0,
-      scaleYDamping: 1.0,
-      squashX: 0,
-      squashY: 0,
-      pressScale: 1.1,
-      trackEnabled: false,
     },
   },
 ];

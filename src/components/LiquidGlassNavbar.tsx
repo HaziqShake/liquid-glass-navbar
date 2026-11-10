@@ -182,13 +182,39 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
     return { w, h, slotW, pillOff: (slotW - pillW) / 2 };
   };
 
-  // The droplet: a clear magnifying lens that slides between tabs.
-  // NOT frosted, true liquid glass transmits and bends light.
-  // The jelly squash and stretch (Anivio publish formula): the pill
-  // stretches along its direction of travel and squashes vertically,
-  // both proportional to speed, X reacting 3x as strongly as Y. The
-  // amounts are the settings multipliers on the 0.75 / 0.25 factors.
-  const dropletStyle = useAnimatedStyle(() => {
+  // The droplet's LAYOUT (width/height/top) and its TRANSFORM (position,
+  // squash/stretch) are two separate animated styles, and that split is
+  // what stops the crash. The layout only depends on the bar's shrink
+  // state (compact), so it only ever changes when the bar resizes, which
+  // is already paused (scroll/expand). The transform only depends on the
+  // jelly springs, so touching and dragging only ever moves/scales the
+  // droplet, never its layout. Before, one style did both, so every frame
+  // of jelly motion re-set the droplet's width/height, and the Android
+  // backdrop-capture pipeline crashes when a visible glass view's layout
+  // changes while it is capturing. That is why even touching the navbar
+  // crashed it. Splitting them also keeps the droplet resizing in exact
+  // lockstep with the bar, since both layouts read the same `compact`.
+  const dropletLayoutStyle = useAnimatedStyle(() => {
+    const g = geometry();
+    const pillW = g.slotW * 0.9;
+    const h = g.h * 0.9;
+    return {
+      width: pillW,
+      height: h,
+      top: (g.h - h) / 2,
+    };
+  });
+
+  // The droplet: a clean magnifying lens, 1:1 like Anivio. No refraction
+  // (thickness 0, so no bending and no chromatic split) and no dispersion
+  // (iridescence 0, so no rainbow rim). The only lens effect is a subtle
+  // centre magnification of the backdrop, and the press grow from the
+  // jelly springs. The jelly squash and stretch (Anivio publish formula):
+  // the pill stretches along its direction of travel and squashes
+  // vertically, both proportional to speed, X reacting 3x as strongly
+  // as Y. The amounts are the settings multipliers on the 0.75 / 0.25
+  // factors.
+  const dropletTransformStyle = useAnimatedStyle(() => {
     const cfg = settingsShared.value;
     const speed = jelly.velocity.value / 10;
     const clampSpeed = (v: number) => Math.min(Math.max(v, -0.2), 0.2);
@@ -197,12 +223,7 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
     const pillScaleX = jelly.scaleX.value / (1 - clampSpeed(speed * sx));
     const pillScaleY = jelly.scaleY.value * (1 - clampSpeed(speed * sy));
     const g = geometry();
-    const pillW = g.slotW * 0.9;
-    const h = g.h * 0.9;
     return {
-      width: pillW,
-      height: h,
-      top: (g.h - h) / 2,
       transform: [
         { translateX: jelly.position.value * g.slotW + g.pillOff },
         { scaleX: pillScaleX },
@@ -350,7 +371,9 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
             variant="clear"
             thickness={settings.barThickness}
             blurRadius={settings.barBlur}
-            iridescence={settings.barIridescence}
+            // No dispersion anywhere: iridescence is the artificial rainbow
+            // rim, and it is off for the bar too.
+            iridescence={0}
             saturation={settings.saturation}
             edgeReflectionStrength={settings.barEdgeReflection}
             legibilityFloor={settings.legibilityFloor}
@@ -417,15 +440,20 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
               <GestureDetector gesture={pan}>
                 <AnimatedLiquidGlassView
                   variant="clear"
-                  thickness={settings.dropletThickness}
+                  // Clean magnifier, 1:1 like Anivio. thickness 0 removes
+                  // the refraction (no bending, no chromatic split) and
+                  // iridescence 0 removes the rainbow rim. The lens only
+                  // magnifies the backdrop a touch at its centre.
+                  thickness={0}
                   blurRadius={settings.dropletBlur}
-                  iridescence={settings.dropletIridescence}
+                  iridescence={0}
+                  magnification={settings.dropletMagnification}
                   saturation={settings.saturation}
                   edgeReflectionStrength={settings.dropletEdgeReflection}
                   paused={glassPaused}
                   borderRadius={99}
                   onError={(e) => console.warn('[glass] droplet error', e.nativeEvent)}
-                  style={[styles.droplet, dropletStyle]}
+                  style={[styles.droplet, dropletLayoutStyle, dropletTransformStyle]}
                 >
                   <View pointerEvents="none" style={styles.dropletIcon}>
                     <ActiveIconComp size={22} color={activeColor} weight="fill" />
