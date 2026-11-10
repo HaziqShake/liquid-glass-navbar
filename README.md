@@ -87,15 +87,66 @@ it, never merged with `LiquidGlassContainer`):
 Geometry: bar is 90 percent of screen width, 64 high, radius 32. It shrinks
 to 70 percent width and 50 high while scrolling down, labels fade out, icons
 shrink to 0.88. The droplet is 90 percent of one tab slot wide and 90 percent
-of bar height, slides on a `pillIndex` shared value, squishes to 1.05
-mid-transition, and grows to 1.22x while held. Magnification stays at 1:
-distortion is wanted, a bubble is not. The lens displacement is
-`14.85dp x thickness`, so 0.75 gives a calm 11.1dp rim bend and 1.0 gives
-14.85dp; 1.4 would be 20.8dp and reads as a defect.
+of bar height. Its center is the jelly position spring, and its scale is the
+squash-and-stretch formula below. Magnification stays at 1: distortion is
+wanted, a bubble is not. The lens displacement is `14.85dp x thickness`, so
+0.75 gives a calm 11.1dp rim bend and 1.0 gives 14.85dp; 1.4 would be 20.8dp
+and reads as a defect.
 
-Interactions: hold the droplet (long-press 200 ms) and drag it to another tab,
-release to snap and navigate. A plain tap on it acts as a tap on the active
-tab. Tapping any tab while the bar is shrunk pops it back open first.
+Interactions: touch the droplet and drag it to another tab, release to snap
+and navigate. No long-press to enter drag mode. A tap (moved less than 4 dp)
+selects the tab under the finger. Tapping any tab while the bar is shrunk pops
+it back open first.
+
+## Water physics (jelly springs)
+
+The refraction is only half the liquid feel. The motion comes from a
+hand-written spring engine ported from Anivio's `JellyMotion`: eleven coupled
+springs stepped by an analytic damped-oscillator solver on every frame, with
+the frame loop sleeping when every spring is at rest. The code lives in
+`src/jelly/` (`JellySpring.ts` is the solver, rubber band and panel offset;
+`useJellyMotion.ts` is the state machine).
+
+Spring table (stiffness, damping ratio):
+
+| Spring | Stiffness | Damping | Role |
+| --- | --- | --- | --- |
+| position | 1000 | 1.0 | Pill center, critically damped, no overshoot on travel |
+| velocity | 300 | 0.5 | Tracks position velocity, drives squash and stretch |
+| press | 1000 | 1.0 | 0 to 1 while the finger is down |
+| scaleX | 250 | 0.6 | Pill X scale, 1.0 resting / 1.3 pressed |
+| scaleY | 250 | 0.7 | Pill Y scale, same targets, settles out of phase with X |
+| panel | 300 | 1.0 | Raw horizontal drag offset for the panel lag |
+| trackY, trackX, trackPress, glow | 266.67 | 0.612 | Whole-bar distortion springs |
+
+What it does, in order of visibility:
+
+- **Squash and stretch.** The droplet stretches along its direction of
+  travel and squashes vertically, both proportional to speed: X is the scale
+  spring divided by `(1 - clamp(speed * 0.75, ±0.2))` (up to 25 percent
+  longer), Y is the scale spring times `(1 - clamp(speed * 0.25, ±0.2))`
+  (up to 20 percent shorter). Icons inside grow to 1.2x while held
+  (`1 + 0.2 * press`).
+- **Press grow with delayed relax.** The pill grows to 1.3x on touch down
+  and only relaxes back to 1.0 once it is nearly home (within
+  `max(1, maxIndex) * 0.025` of its target), so the squash lands at the
+  destination instead of mid-flight.
+- **Rubber-band track distortion.** While dragging, the whole bar pulls down
+  with the finger (rubber-banded, quarter strength), narrows up to 8 percent,
+  and swells to 1.025x, all pivoting on the touch point. On release the track
+  springs wobble it back.
+- **Panel lag.** The bar content trails the finger by a ±4 dp eased offset
+  (cubic-bezier solve, x-control 0.58), which is what makes it feel like
+  dragging through water rather than glued to the finger.
+- **Touch glow.** A radial gradient (radius 300, peak alpha 0.15) centered on
+  the finger while dragging.
+- **Tap vs drag.** Moved less than 4 dp is a tap on the tab under the finger;
+  otherwise it snaps to the nearest tab on release. No long-press to enter
+  drag mode.
+
+The scroll shrink is also jelly-flavoured: the bar only shrinks after 60 px
+of same-direction scroll, then eases over 300 ms on the standard curve
+`cubic-bezier(0.2, 0, 0, 1)`.
 
 ## Two rules that will save you a day
 

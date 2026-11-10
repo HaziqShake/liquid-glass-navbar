@@ -23,9 +23,10 @@ const TABS: NavItem[] = [
 
 const CARDS = [
   { title: 'Refraction, not blur', body: 'The bar bends the photo behind it. Scroll and watch the rim distort the image as content passes under.' },
-  { title: 'The droplet', body: 'The active tab indicator is a second glass lens. Tap a tab and it slides over. Hold it and drag it to another tab.' },
-  { title: 'Shrink on scroll', body: 'Scroll down and the bar shrinks to 70 percent width and 50 height, labels fade out, icons shrink slightly.' },
-  { title: 'Hold to drag', body: 'Long-press the droplet (200 ms), slide it across the tabs, release to snap and navigate.' },
+  { title: 'The droplet', body: 'The active tab indicator is a second glass lens. Tap a tab and it springs over, stretching along its travel and squashing as it lands.' },
+  { title: 'Jelly springs', body: 'Eleven coupled springs drive the motion: a critically damped position spring, an underdamped velocity spring for squash and stretch, and rubber-banded track springs for the whole bar.' },
+  { title: 'Touch and drag', body: 'Touch the droplet and drag, no long-press needed. The pill follows your finger, grows to 1.3x while held, and settles with a wobble once it is nearly home.' },
+  { title: 'Squash and stretch', body: 'The droplet elongates in its direction of travel, up to 25 percent longer, and squashes up to 20 percent vertically, both proportional to speed.' },
   { title: 'Specular rim', body: 'Light comes from the top. The edge reflection is soft on purpose, 0.35 on the bar, 0.5 on the droplet.' },
   { title: 'Legibility veil', body: 'A faint adaptive veil sits under the icons so they stay readable over clear glass, even on bright photos.' },
   { title: 'Blur scrim', body: 'Behind the bar the content dissolves into a gradient of blur, not a background-colour fade.' },

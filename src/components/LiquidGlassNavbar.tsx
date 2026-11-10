@@ -2,10 +2,7 @@ import React, { useEffect } from 'react';
 import { View, TouchableOpacity, Dimensions, StyleSheet, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
-  useSharedValue,
   useAnimatedStyle,
-  withTiming,
-  Easing,
   interpolate,
   interpolateColor,
   Extrapolation,
@@ -15,9 +12,12 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { LiquidGlassView, GlassTier } from 'react-native-liquid-glassmorphism';
+import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { BlurScrim } from './BlurScrim';
 import { House, MagnifyingGlass, Heart, User, CircleNotch } from 'phosphor-react-native';
 import { useNavScroll } from '../context/NavScrollContext';
+import { useJellyMotion } from '../jelly/useJellyMotion';
+import { jellyPanelOffset } from '../jelly/JellySpring';
 
 const ICON_MAP: Record<string, any> = {
   House, MagnifyingGlass, Heart, User, CircleNotch,
@@ -49,7 +49,10 @@ const AnimatedLiquidGlassView = Animated.createAnimatedComponent(LiquidGlassView
 interface TabItemProps {
   item: NavItem;
   index: number;
+  /** The jelly position spring (tab-index units, fractional while travelling). */
   pillIndex: SharedValue<number>;
+  /** The jelly press spring (0 to 1 while the finger is down). */
+  press: SharedValue<number>;
   activeColor: string;
   inactiveColor: string;
   labelCollapseStyle: AnimatedStyle<ViewStyle>;
@@ -60,12 +63,14 @@ interface TabItemProps {
 /**
  * One tab. The active (contrasting) icon is crossfaded in based on how much
  * the sliding droplet overlaps this tab's slot, so the icon only turns bright
- * where the droplet actually is, never before it arrives.
+ * where the droplet actually is, never before it arrives. While the droplet
+ * is held, the active icon grows with the press spring (1 + 0.2 * press).
  */
 const TabItem: React.FC<TabItemProps> = ({
   item,
   index,
   pillIndex,
+  press,
   activeColor,
   inactiveColor,
   labelCollapseStyle,
@@ -95,6 +100,10 @@ const TabItem: React.FC<TabItemProps> = ({
     return { color: interpolateColor(coverage, [0, 1], [inactiveColor, activeColor]) };
   });
 
+  const contentScaleStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: 1 + 0.2 * press.value }],
+  }));
+
   return (
     <TouchableOpacity
       style={styles.iconSlot}
@@ -103,7 +112,7 @@ const TabItem: React.FC<TabItemProps> = ({
     >
       <Animated.View style={[styles.iconWrapper, iconScaleStyle]}>
         <IconComp size={22} color={inactiveColor} weight="regular" />
-        <Animated.View style={[StyleSheet.absoluteFill, coverageStyle]}>
+        <Animated.View style={[StyleSheet.absoluteFill, coverageStyle, contentScaleStyle]}>
           <IconComp size={22} color={activeColor} weight="fill" />
         </Animated.View>
       </Animated.View>
@@ -125,31 +134,27 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
   const insets = useSafeAreaInsets();
 
   const activeIndex = items.findIndex(i => i.route === activeRoute);
+  const maxIndex = items.length - 1;
 
-  // Transition between tabs (active droplet)
-  const pillIndex = useSharedValue(activeIndex >= 0 ? activeIndex : 0);
+  // Jelly motion: eleven coupled springs (Anivio). The position spring is the
+  // pill's center in tab-index units; everything else hangs off it.
+  const jelly = useJellyMotion(
+    activeIndex >= 0 ? activeIndex : 0,
+    items.length,
+    NAV_WIDTH / 2,
+  );
 
+  // If the active route ever changes from outside, drive the pill there.
   useEffect(() => {
-    if (activeIndex >= 0) {
-      // Ease out animation for smooth transition
-      pillIndex.value = withTiming(activeIndex, {
-        duration: 300,
-        easing: Easing.out(Easing.quad),
-      });
+    if (
+      activeIndex >= 0 &&
+      Math.round(jelly.positionTarget.value) !== activeIndex
+    ) {
+      jelly.select(activeIndex);
     }
   }, [activeIndex]);
 
   const { translateY, compact, glassPaused, expandNavbar } = useNavScroll();
-
-  const navAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [
-        {
-          translateY: translateY.value,
-        },
-      ],
-    };
-  });
 
   // Shrink the bar while scrolling down (width + height; droplet follows).
   // The glass is PAUSED during scroll (see glassPaused), so it holds a static
@@ -160,28 +165,31 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
     width: interpolate(compact.value, [0, 1], [NAV_WIDTH, SHRUNK_WIDTH]),
   }));
 
-  // Hold-to-drag state: the droplet lens grows while dragging
-  const dragging = useSharedValue(0);
-  const dragStartIndex = useSharedValue(0);
+  // Bar geometry in the current (possibly shrunk) state, for the gesture.
+  const geometry = () => {
+    'worklet';
+    const w = interpolate(compact.value, [0, 1], [NAV_WIDTH, SHRUNK_WIDTH]);
+    const h = interpolate(compact.value, [0, 1], [NAV_HEIGHT, SHRUNK_HEIGHT]);
+    const slotW = w / items.length;
+    const pillW = slotW * 0.9;
+    return { w, h, slotW, pillOff: (slotW - pillW) / 2 };
+  };
 
   // The droplet: a clear magnifying lens that slides between tabs.
   // NOT frosted, true liquid glass transmits and bends light.
+  // The jelly squash and stretch (Anivio publish formula): the pill
+  // stretches along its direction of travel and squashes vertically,
+  // both proportional to speed, X reacting 3x as strongly as Y.
   const dropletStyle = useAnimatedStyle(() => {
-    // Add subtle scale squish during transition for liquid feel
-    const scale = interpolate(
-      pillIndex.value % 1,
-      [0, 0.5, 1],
-      [1, 1.05, 1]
-    );
+    const speed = jelly.velocity.value / 10;
+    const clampSpeed = (v: number) => Math.min(Math.max(v, -0.2), 0.2);
+    const pillScaleX = jelly.scaleX.value / (1 - clampSpeed(speed * 0.75));
+    const pillScaleY = jelly.scaleY.value * (1 - clampSpeed(speed * 0.25));
     const h = interpolate(compact.value, [0, 1], [NAV_HEIGHT * 0.9, SHRUNK_HEIGHT * 0.9]);
-    // Droplet geometry tracks the animated bar width so it stays on its tab
     const w = interpolate(compact.value, [0, 1], [NAV_WIDTH, SHRUNK_WIDTH]);
     const slotW = w / items.length;
     const pillW = slotW * 0.9;
     const pillOff = (slotW - pillW) / 2;
-    // The lens detaches and grows while held (reference: drag thumb)
-    const ds = interpolate(dragging.value, [0, 1], [1, 1.22]);
-
     return {
       width: pillW,
       height: h,
@@ -191,9 +199,9 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
         [(NAV_HEIGHT - NAV_HEIGHT * 0.9) / 2, (SHRUNK_HEIGHT - SHRUNK_HEIGHT * 0.9) / 2]
       ),
       transform: [
-        { translateX: pillIndex.value * slotW + pillOff },
-        { scaleX: scale * ds },
-        { scaleY: ds },
+        { translateX: jelly.position.value * slotW + pillOff },
+        { scaleX: pillScaleX },
+        { scaleY: pillScaleY },
       ],
     };
   });
@@ -209,59 +217,105 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
     transform: [{ scale: interpolate(compact.value, [0, 1], [1, 0.88]) }],
   }));
 
+  // Whole-bar jelly: the bar scales and pulls around the touch point while
+  // dragging (Anivio track springs). The scale pivots on originX via the
+  // translate trick, since React Native has no transform origin.
+  const trackStyle = useAnimatedStyle(() => {
+    const ox = jelly.originX.value;
+    return {
+      transform: [
+        { translateX: ox },
+        { scaleX: jelly.trackX.value },
+        { scale: jelly.trackPress.value },
+        { translateX: -ox },
+        { translateY: translateY.value + jelly.trackY.value },
+      ],
+    };
+  });
+
+  // The bar content lags a few dp behind the finger (Anivio panel offset).
+  const panelStyle = useAnimatedStyle(() => {
+    const barW = interpolate(compact.value, [0, 1], [NAV_WIDTH, SHRUNK_WIDTH]);
+    return {
+      transform: [{ translateX: jellyPanelOffset(jelly.panel.value, barW) }],
+    };
+  });
+
+  // Touch glow: radial gradient centered on the finger while dragging.
+  const glowStyle = useAnimatedStyle(() => {
+    const opacity = Math.min(Math.max(jelly.glow.value, 0), 1);
+    return {
+      opacity,
+      transform: [
+        { translateX: jelly.originX.value - 150 },
+        { translateY: jelly.glowY.value - 150 },
+      ],
+    };
+  });
+
   const activeColor = '#FFFFFF';
   const inactiveColor = 'rgba(255, 255, 255, 0.65)';
 
-  // Tapping any tab pops a shrunk bar back open, then navigates
+  // Tapping any tab pops a shrunk bar back open, then navigates. The pill
+  // springs there with a press pulse (jelly select).
   const handlePress = (route: string) => {
     expandNavbar();
+    const index = items.findIndex(i => i.route === route);
+    if (index >= 0) {
+      jelly.select(index);
+    }
     onPress(route);
   };
 
-  // Hold the droplet, then slide it to another tab. The icons crossfade
-  // with the droplet automatically since they are driven by pillIndex.
-  const pillPan = Gesture.Pan()
-    .activateAfterLongPress(200)
-    .onBegin(() => {
+  // Jelly gesture lifecycle (Anivio). No long-press to enter drag mode: the
+  // pill follows the finger from touch down, and tap vs drag is decided at
+  // release by the 4 dp rule inside jelly.finish.
+  const pan = Gesture.Pan()
+    .onBegin((e) => {
       'worklet';
-      dragStartIndex.value = pillIndex.value;
-      dragging.value = withTiming(1, { duration: 180 });
+      const g = geometry();
+      const dropletLeft = jelly.position.value * g.slotW + g.pillOff;
+      const dropletTop = (g.h - g.h * 0.9) / 2;
+      jelly.begin(
+        dropletLeft + e.x,
+        dropletTop + e.y,
+        g.h,
+        g.slotW,
+        maxIndex,
+        g.w,
+      );
     })
     .onUpdate((e) => {
       'worklet';
-      const w = interpolate(compact.value, [0, 1], [NAV_WIDTH, SHRUNK_WIDTH]);
-      const slotW = w / items.length;
-      const raw = dragStartIndex.value + e.translationX / slotW;
-      pillIndex.value = Math.min(Math.max(raw, 0), items.length - 1);
+      const g = geometry();
+      jelly.drag(
+        e.translationX,
+        e.translationY,
+        g.slotW,
+        maxIndex,
+        g.w,
+        g.h,
+      );
     })
     .onEnd(() => {
       'worklet';
-      const snapped = Math.round(pillIndex.value);
-      pillIndex.value = withTiming(snapped, {
-        duration: 200,
-        easing: Easing.out(Easing.quad),
-      });
-      runOnJS(handlePress)(items[snapped].route);
+      const g = geometry();
+      const index = jelly.finish(g.slotW, maxIndex);
+      runOnJS(handlePress)(items[index].route);
     })
     .onFinalize(() => {
       'worklet';
-      dragging.value = withTiming(0, { duration: 180 });
+      if (jelly.dragging.value) {
+        const g = geometry();
+        const index = jelly.finish(g.slotW, maxIndex);
+        runOnJS(handlePress)(items[index].route);
+      }
     });
-
-  // The invisible drag handle sits above the tabs, so plain taps on the
-  // droplet are re-created here (same as tapping the active tab).
-  const pillTap = Gesture.Tap().onEnd(() => {
-    'worklet';
-    runOnJS(handlePress)(activeRoute);
-  });
-
-  const pillGesture = Gesture.Exclusive(pillPan, pillTap);
 
   return (
     <Animated.View
       style={[
         styles.outerWrapper,
-        navAnimatedStyle,
         { paddingBottom: Math.max(insets.bottom, 12) },
       ]}
       pointerEvents="box-none"
@@ -269,64 +323,90 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
       {/* The bar itself is the glass, no tint, no glow, no colour. */}
       {/* Blur scrim behind the bar: content dissolves into blur, not a bg-color fade */}
       <BlurScrim edge="bottom" height={170} />
-      <AnimatedLiquidGlassView
-        variant="clear"
-        thickness={0.75}
-        blurRadius={6}
-        iridescence={0}
-        saturation={0.8}
-        edgeReflectionStrength={0.35}
-        legibilityFloor={0.4}
-        interactive
-        paused={glassPaused}
-        borderRadius={NAV_RADIUS}
-        onPipelineReady={(e) => onTier?.(e.nativeEvent.tier)}
-        onError={(e) => console.warn('[glass] bar error', e.nativeEvent)}
-        style={[
-          styles.navContainer,
-          containerShrinkStyle,
-        ]}>
-        {/* Tab Items */}
-        <View style={styles.iconRow}>
-          {items.map((item, index) => (
-            <TabItem
-              key={item.route}
-              item={item}
-              index={index}
-              pillIndex={pillIndex}
-              activeColor={activeColor}
-              inactiveColor={inactiveColor}
-              labelCollapseStyle={labelCollapseStyle}
-              iconScaleStyle={iconScaleStyle}
-              onPress={handlePress}
-            />
-          ))}
-        </View>
-      </AnimatedLiquidGlassView>
+      <Animated.View style={trackStyle} pointerEvents="box-none">
+        <Animated.View style={panelStyle} pointerEvents="box-none">
+          <AnimatedLiquidGlassView
+            variant="clear"
+            thickness={0.75}
+            blurRadius={6}
+            iridescence={0}
+            saturation={0.8}
+            edgeReflectionStrength={0.35}
+            legibilityFloor={0.4}
+            interactive
+            paused={glassPaused}
+            borderRadius={NAV_RADIUS}
+            onPipelineReady={(e) => onTier?.(e.nativeEvent.tier)}
+            onError={(e) => console.warn('[glass] bar error', e.nativeEvent)}
+            style={[
+              styles.navContainer,
+              containerShrinkStyle,
+            ]}>
+            {/* Tab Items */}
+            <View style={styles.iconRow}>
+              {items.map((item, index) => (
+                <TabItem
+                  key={item.route}
+                  item={item}
+                  index={index}
+                  pillIndex={jelly.position}
+                  press={jelly.press}
+                  activeColor={activeColor}
+                  inactiveColor={inactiveColor}
+                  labelCollapseStyle={labelCollapseStyle}
+                  iconScaleStyle={iconScaleStyle}
+                  onPress={handlePress}
+                />
+              ))}
+            </View>
+          </AnimatedLiquidGlassView>
 
-      {/* The droplet floats OVER the bar (not clipped inside it), when held
-          it grows to 1.22x and draws above the navbar silhouette. */}
-      {activeIndex >= 0 && (
-        <Animated.View
-          style={[styles.dropletLayer, containerShrinkStyle, { bottom: Math.max(insets.bottom, 12) }]}
-          pointerEvents="box-none"
-        >
-          <GestureDetector gesture={pillGesture}>
-            <AnimatedLiquidGlassView
-              variant="clear"
-              thickness={1.0}
-              blurRadius={4}
-              iridescence={0}
-              saturation={0.8}
-              edgeReflectionStrength={0.5}
-              paused={glassPaused}
-              borderRadius={99}
-              onError={(e) => console.warn('[glass] droplet error', e.nativeEvent)}
-              style={[styles.droplet, dropletStyle]}
-            />
-          </GestureDetector>
+          {/* Touch glow: radial gradient, radius 300, peak alpha 0.15,
+              centered on the finger while dragging (Anivio JellyDrawing). */}
+          <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]}>
+            <Svg width={300} height={300}>
+              <Defs>
+                <RadialGradient
+                  id="touchGlow"
+                  cx="150"
+                  cy="150"
+                  r="150"
+                  gradientUnits="userSpaceOnUse"
+                >
+                  <Stop offset="0" stopColor="#FFFFFF" stopOpacity="0.15" />
+                  <Stop offset="0.45" stopColor="#FFFFFF" stopOpacity="0.0645" />
+                  <Stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
+                </RadialGradient>
+              </Defs>
+              <Circle cx="150" cy="150" r="150" fill="url(#touchGlow)" />
+            </Svg>
+          </Animated.View>
+
+          {/* The droplet floats OVER the bar (not clipped inside it), when held
+              it grows to 1.3x and draws above the navbar silhouette. */}
+          {activeIndex >= 0 && (
+            <Animated.View
+              style={[styles.dropletLayer, containerShrinkStyle, { bottom: 0 }]}
+              pointerEvents="box-none"
+            >
+              <GestureDetector gesture={pan}>
+                <AnimatedLiquidGlassView
+                  variant="clear"
+                  thickness={1.0}
+                  blurRadius={4}
+                  iridescence={0}
+                  saturation={0.8}
+                  edgeReflectionStrength={0.5}
+                  paused={glassPaused}
+                  borderRadius={99}
+                  onError={(e) => console.warn('[glass] droplet error', e.nativeEvent)}
+                  style={[styles.droplet, dropletStyle]}
+                />
+              </GestureDetector>
+            </Animated.View>
+          )}
         </Animated.View>
-      )}
+      </Animated.View>
     </Animated.View>
   );
 };
@@ -354,6 +434,13 @@ const styles = StyleSheet.create({
   droplet: {
     position: 'absolute',
     borderRadius: 99,
+  },
+  glow: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: 300,
+    height: 300,
   },
   iconRow: {
     flex: 1,

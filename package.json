@@ -1,1 +1,30 @@
-{"dependencies":{"expo":"~57.0.0","expo-blur":"57.0.3","expo-font":"~57.0.4","phosphor-react-native":"^3.0.6","react":"19.2.3","react-native":"0.86.3","react-native-gesture-handler":"~2.32.0","react-native-liquid-glassmorphism":"^1.2.1","react-native-reanimated":"4.5.1","react-native-safe-area-context":"~5.7.0"},"devDependencies":{"@babel/core":"^7.26.0","@types/react":"~19.2.0","typescript":"~5.9.0"},"main":"expo/AppEntry.js","name":"liquid-glass-navbar","private":true,"scripts":{"android":"expo run:android","ios":"expo run:ios","prebuild":"expo prebuild","start":"expo start"},"version":"1.0.0"}
+{
+  "dependencies": {
+    "expo": "~57.0.0",
+    "expo-blur": "57.0.3",
+    "expo-font": "~57.0.4",
+    "phosphor-react-native": "^3.0.6",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-liquid-glassmorphism": "^1.2.1",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-svg": "15.15.4"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@types/react": "~19.2.0",
+    "typescript": "~5.9.0"
+  },
+  "main": "expo/AppEntry.js",
+  "name": "liquid-glass-navbar",
+  "private": true,
+  "scripts": {
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "prebuild": "expo prebuild",
+    "start": "expo start"
+  },
+  "version": "1.0.0"
+}

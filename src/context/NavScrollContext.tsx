@@ -29,6 +29,9 @@ export const NavScrollProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // 0 = navbar expanded, 1 = navbar shrunk (scrolling down)
   const compact = useSharedValue(0);
   const compactTarget = useSharedValue(0);
+  // Accumulated scroll in the current direction, for the label fraction
+  // (Anivio): the bar only shrinks after 60 px of same-direction scroll.
+  const accumulated = useSharedValue(0);
   // Pause liquid-glass capture while scrolling: the Android backdrop-capture
   // pipeline crashes when a visible glass view captures during scroll.
   // The glass holds its last frame while paused and re-captures on resume.
@@ -68,13 +71,22 @@ export const NavScrollProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           easing: Easing.out(Easing.quad),
         });
       }
-      // Shrink navbar while scrolling down, restore on scroll up / near top
-      const want = y > 32 ? (dy > 1 ? 1 : dy < -1 ? 0 : compactTarget.value) : 0;
+      // Label fraction (Anivio): accumulate scroll in the current direction,
+      // reset the accumulator on direction change, snap the target at 60 px,
+      // then smooth the 0 to 1 transition over 300 ms on the standard curve.
+      if ((dy > 0 && accumulated.value < 0) || (dy < 0 && accumulated.value > 0)) {
+        accumulated.value = 0;
+      }
+      accumulated.value += dy;
+      let want = compactTarget.value;
+      if (accumulated.value > 60) want = 1;
+      else if (accumulated.value < -60) want = 0;
+      else if (y <= 0) want = 0;
       if (want !== compactTarget.value) {
         compactTarget.value = want;
         compact.value = withTiming(want, {
-          duration: 250,
-          easing: Easing.out(Easing.quad),
+          duration: 300,
+          easing: Easing.bezier(0.2, 0, 0, 1),
         });
       }
     },
