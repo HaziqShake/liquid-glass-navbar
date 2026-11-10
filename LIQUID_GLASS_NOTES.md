@@ -62,6 +62,15 @@ The glass edge catches light on the **top left** and falls to **shadow on the bo
 - Do not use SVG displacement for backdrops (not supported).
 - Do not expect expo-blur alone to refract. It is blur only.
 
+## Haziq's corrections after testing the Anivio build (10 Nov 16:23)
+- **Refraction:** add the liquid-glass lens refraction back, like the old navbar. The background must bend through the glass at the edges. Done via a native AGSL RuntimeShader (RenderEffect, hardware path), modeled on Anivio's GlassBarShader.kt, in `modules/liquid-glass-refraction/`. Never a software capture.
+- **Droplet on top:** the droplet (pill) must be drawn as a sibling ABOVE the navbar, not clipped inside it. When held it grows and draws over the navbar silhouette.
+- **Droplet moves as a whole:** when dragging, the pill must travel as a solid droplet. It must not look like a static cookie cutter with only the insides moving. Fixed by driving the pill with transforms (translateX + squash), not layout props.
+- **Tap moves the droplet:** tapping a tab must move the droplet to that tab (it was swipe only). A Tap gesture now calls the jelly `tap` worklet.
+- **Bar grows when held:** when holding the droplet, the BAR itself must increase in size, not just the icons. The bar now grows ~6% (layout size) while held.
+- **Shrunken blur shift:** in the shrunken state the background inside the bar was shifted left, mismatching the blur, with a dark band at the bar's right end. Cause: the bar shrank via a scale transform while the BlurView blurred the unscaled layout region. Fixed by animating the bar's layout width/height instead of a scale transform.
+- **Edge lighting (corrected):** the edge light must be THIN, very thin (~1px), glowing ONLY on the top-left and the bottom-right, exactly opposite each other (or top and very bottom). Not thick, not a full border. Implemented as a 1px stroke with a diagonal gradient bright only at the two opposite corners, plus a faint wider underlay for the glow halo.
+
 ## Expo React Native: what is actually possible
 
 ### Real blur on Android (critical)

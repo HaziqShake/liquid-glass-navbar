@@ -74,6 +74,8 @@ export interface JellyFrame {
   pillScaleX: number;
   pillScaleY: number;
   contentScale: number;
+  /** The press spring, 0..1. 1 while the droplet is held. The bar grows with it. */
+  press: number;
   panelOffset: number;
   trackScale: number;
   trackScaleX: number;
@@ -154,6 +156,7 @@ function publishFrame(s: MotionState, frame: SharedValue<JellyFrame>): void {
     pillScaleX: s.scaleX / (1 - sx),
     pillScaleY: s.scaleY * (1 - sy),
     contentScale: 1 + 0.2 * s.press,
+    press: s.press,
     panelOffset: jellyPanelOffset(s.panel, s.width),
     trackScale: s.trackPress,
     trackScaleX: s.trackX,
@@ -174,6 +177,14 @@ export interface JellyMotionApi {
   finish: () => number;
   cancel: (selectedIndex: number) => void;
   resize: (width: number, height: number, count: number) => void;
+  /**
+   * Tap a point on the bar. Computes the tab under the point, animates the
+   * droplet to it, and returns the index. A worklet; call it from a Tap
+   * gesture worklet (worklet-to-worklet) or via runOnUI from JS. This is
+   * what makes a tap move the droplet; the Pan gesture alone does not
+   * activate for a tap with no movement, so its finish() never runs.
+   */
+  tap: (x: number, y: number) => number;
 }
 
 export function useJellyMotion(
@@ -227,6 +238,7 @@ export function useJellyMotion(
     pillScaleX: 1,
     pillScaleY: 1,
     contentScale: 1,
+    press: 0,
     panelOffset: 0,
     trackScale: 1,
     trackScaleX: 1,
@@ -323,11 +335,47 @@ export function useJellyMotion(
     (selectedIndex: number): void => {
       'worklet';
       const s = st.value;
+      // If this was a tap (moved < 4dp), the Tap gesture handles the
+      // select; do not snap the target back to the old index, which
+      // would undo the tap. Only a real drag that got cancelled snaps back.
+      if (s.movedDistance < 4) {
+        s.dragging = false;
+        return;
+      }
       s.dragging = false;
       s.panelVel = 0;
       select(selectedIndex);
     },
     [st, select],
+  );
+
+  const tap = useCallback(
+    (x: number, y: number): number => {
+      'worklet';
+      const s = st.value;
+      const tw = tabWidthOf(s);
+      const maxIndex = Math.max(s.tabCount - 1, 0);
+      let index: number;
+      if (tw > 0) {
+        index = indexAt(s, x);
+      } else {
+        index = Math.min(Math.max(Math.floor(s.target + 0.5), 0), maxIndex);
+      }
+      // A tap is a press-and-release: the droplet grows briefly (press was
+      // set to 1 by begin on touch down) and then settles on the new tab.
+      s.dragging = false;
+      s.panelVel = 0;
+      s.target = index;
+      s.releasePending = true;
+      s.pressTarget = 0;
+      s.shapeTarget = 1.0;
+      s.running = true;
+      s.downX = x;
+      s.downY = Math.min(Math.max(y, 0), s.height);
+      publishFrame(s, frame);
+      return index;
+    },
+    [st, frame],
   );
 
   const resize = useCallback(
@@ -460,5 +508,6 @@ export function useJellyMotion(
     finish,
     cancel,
     resize,
+    tap,
   };
 }
