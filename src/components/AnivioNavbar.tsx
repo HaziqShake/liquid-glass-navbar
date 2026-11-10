@@ -137,12 +137,13 @@ const PILL_FILL = 'rgba(255,255,255,0.15)';
 const BAR_FILL_BASE = '28,28,30';
 
 /** True when the native AGSL refraction view can run (Android API 33+).
- * DISABLED 10 Nov 2026: the liquid-glass-refraction native module is not
- * autolinking (expo prebuild does not include it, so its ViewManager is
- * never registered and the app crashes with IllegalViewOperationException
- * when the RefractionView renders). Falls back to the fill View until the
- * module registration is fixed. */
-const HAS_REFRACTION = false;
+ * Re-enabled 10 Nov 2026: the crash was a .gitignore bug, not the module.
+ * A bare `android/` rule was ignoring modules/liquid-glass-refraction/android/,
+ * so the Kotlin never reached CI and autolinking dropped the module. The
+ * .gitignore is now anchored to the repo root (/android/), so the native
+ * code is committed and the module links. */
+const HAS_REFRACTION =
+  Platform.OS === 'android' && typeof Platform.Version === 'number' && Platform.Version >= 33;
 
 interface AnivioNavbarProps {
   tabs: TabItem[];

@@ -9,8 +9,12 @@ node_modules/
 dist/
 
 # native build output (regenerate with `npx expo prebuild`)
-android/
-ios/
+# Anchored to the repo root with a leading slash: a bare `android/`
+# would also ignore nested native module dirs such as
+# modules/liquid-glass-refraction/android/, which must be committed
+# or the module's Kotlin never reaches CI and autolinking drops it.
+/android/
+/ios/
 
 # logs
 *.log
