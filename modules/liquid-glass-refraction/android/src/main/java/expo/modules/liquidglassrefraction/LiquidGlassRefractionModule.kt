@@ -24,6 +24,16 @@ class LiquidGlassRefractionModule : Module() {
       Prop("tintMix", RefractionView.DEFAULT_TINT_MIX) { view: RefractionView, tintMix: Float ->
         view.setTintMix(tintMix)
       }
+
+      // Tint colour mixed into the backdrop (linear 0..1 floats).
+      // Dark mode passes the dark #1C1C1E default; light mode passes
+      // white so the refraction mixes a light tint. The default here is
+      // the dark tint; the JS side always passes an explicit value.
+      Prop("tintColor", listOf(28.0 / 255.0, 28.0 / 255.0, 30.0 / 255.0)) { view: RefractionView, tintColor: List<Double> ->
+        if (tintColor.size >= 3) {
+          view.setTintColor(tintColor[0].toFloat(), tintColor[1].toFloat(), tintColor[2].toFloat())
+        }
+      }
     }
   }
 }
