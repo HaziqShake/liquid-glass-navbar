@@ -6,13 +6,11 @@
  */
 
 export interface NavbarSettings {
-  // Glass (the bar is the only glass surface now, the pill is a plain
-  // View, so there are no droplet glass settings)
-  barThickness: number;
+  // Bar (Anivio's GlassBarSurface: a live GPU blur with a dark fill and
+  // a top edge highlight. barBlur is the expo-blur intensity, 0-100.
+  // barEdgeReflection is the edge highlight strength.)
   barBlur: number;
-  saturation: number;
   barEdgeReflection: number;
-  legibilityFloor: number;
   // Springs (stiffness, damping ratio)
   positionStiffness: number;
   positionDamping: number;
@@ -45,11 +43,8 @@ export interface NavbarSettings {
 }
 
 export const DEFAULT_SETTINGS: NavbarSettings = {
-  barThickness: 0.75,
-  barBlur: 1,
-  saturation: 0.8,
+  barBlur: 80,
   barEdgeReflection: 0.35,
-  legibilityFloor: 0.4,
   positionStiffness: 1000,
   positionDamping: 1.0,
   velocityStiffness: 300,
@@ -104,13 +99,10 @@ export interface SettingsSection {
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
-    title: 'Glass',
+    title: 'Bar',
     controls: [
-      { kind: 'slider', key: 'barThickness', label: 'Bar thickness', min: 0.3, max: 2, step: 0.05 },
-      { kind: 'slider', key: 'barBlur', label: 'Bar blur', min: 0, max: 20, step: 1 },
-      { kind: 'slider', key: 'saturation', label: 'Saturation', min: 0, max: 1.5, step: 0.05 },
+      { kind: 'slider', key: 'barBlur', label: 'Bar blur', min: 0, max: 100, step: 1 },
       { kind: 'slider', key: 'barEdgeReflection', label: 'Bar edge reflection', min: 0, max: 1, step: 0.05 },
-      { kind: 'slider', key: 'legibilityFloor', label: 'Legibility veil', min: 0, max: 0.8, step: 0.05 },
     ],
   },
   {

@@ -8,8 +8,8 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { LiquidGlassView, GlassTier } from 'react-native-liquid-glassmorphism';
-import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
+import { BlurView } from 'expo-blur';
+import Svg, { Defs, RadialGradient, LinearGradient, Stop, Circle, Rect } from 'react-native-svg';
 import { BlurScrim } from './BlurScrim';
 import { House, MagnifyingGlass, Heart, User, CircleNotch } from 'phosphor-react-native';
 import { useNavScroll } from '../context/NavScrollContext';
@@ -40,12 +40,7 @@ export interface LiquidGlassNavbarProps {
   items: NavItem[];
   activeRoute: string;
   onPress: (route: string) => void;
-  /** Called once the bar reports which rendering tier the device actually used. */
-  onTier?: (tier: GlassTier) => void;
 }
-
-// Animated wrapper for the glass view.
-const AnimatedLiquidGlassView = Animated.createAnimatedComponent(LiquidGlassView);
 
 interface TabItemProps {
   item: NavItem;
@@ -86,11 +81,22 @@ const TabItem: React.FC<TabItemProps> = ({
   );
 };
 
+/**
+ * Tahseen's navbar (Anivio), built in Expo React Native.
+ *
+ * Anivio's bar is not a software backdrop capture. It is a live GPU blur
+ * (Haze, blur radius 24dp, transparent tint) with a dark surface fill
+ * (#1C1C1E at 0.55) and a top edge highlight, all drawn by the GPU. That
+ * is why it is smooth: there is no capture, no pause, nothing to freeze
+ * or crash. This port uses the same approach: expo-blur's BlurView is
+ * the Haze equivalent (a live GPU blur of whatever is behind the bar),
+ * with the same dark fill and edge highlight layered on top. The pill,
+ * the jelly springs and the whole-bar gesture are Anivio's, ported 1:1.
+ */
 export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
   items,
   activeRoute,
   onPress,
-  onTier,
 }) => {
   const insets = useSafeAreaInsets();
   const { settings, settingsShared } = useNavbarSettings();
@@ -120,12 +126,9 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
 
   // ------------------------------------------------------------------
   // Bar geometry. FIXED. The bar's layout size never changes: width is
-  // 90% of the screen and height is 64, always. This is the whole point
-  // of this rewrite. The old bar animated its layout width and height,
-  // which resized the glass view while it was capturing, and that is
-  // what crashed. A layout that never changes cannot crash that way.
-  // The shrink is a transform scale (below), which only changes how the
-  // bar is drawn, never its layout.
+  // 90% of the screen and height is 64, always. The shrink is a
+  // transform scale (below), which only changes how the bar is drawn,
+  // never its layout.
   // ------------------------------------------------------------------
   const navWidth = SCREEN_WIDTH * settings.barWidthPct;
   const navHeight = settings.barHeight;
@@ -137,15 +140,14 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
 
   // ------------------------------------------------------------------
   // Shrink. A transform scale driven by `compact`, 1 at rest and the
-  // shrunk size while scrolling down. It is applied to the glass view
-  // itself, which has explicit width and height, so the pivot is
-  // definitely the bar's centre: translate to the centre, scale,
-  // translate back. The bar stays centred while it shrinks. This is a
-  // pure transform: the bar's layout size never changes. The pill is a
-  // child of the bar, so it is scaled by the same transform and
-  // resizes with the bar by construction. The ratios come from
-  // settings: width to shrunkWidthPct, height to shrunkHeight /
-  // barHeight.
+  // shrunk size while scrolling down. It is applied to the bar itself,
+  // which has explicit width and height, so the pivot is definitely
+  // the bar's centre: translate to the centre, scale, translate back.
+  // The bar stays centred while it shrinks. This is a pure transform:
+  // the bar's layout size never changes. The pill is a child of the
+  // bar, so it is scaled by the same transform and resizes with the
+  // bar by construction. The ratios come from settings: width to
+  // shrunkWidthPct, height to shrunkHeight / barHeight.
   // ------------------------------------------------------------------
   const barShrinkStyle = useAnimatedStyle(() => {
     const cfg = settingsShared.value;
@@ -290,6 +292,13 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
       }
     });
 
+  // Anivio's edge highlight: a vertical white gradient, strong at the
+  // top (0.27) fading to almost nothing at the bottom (0.02), drawn as
+  // a thin stroke around the bar. The strength follows the edge
+  // reflection setting.
+  const edgeTop = 0.27 * settings.barEdgeReflection / 0.35;
+  const edgeBottom = 0.02 * settings.barEdgeReflection / 0.35;
+
   return (
     <Animated.View
       style={[
@@ -303,92 +312,104 @@ export const LiquidGlassNavbar: React.FC<LiquidGlassNavbarProps> = ({
       <Animated.View style={trackStyle} pointerEvents="box-none">
         <Animated.View style={panelStyle} pointerEvents="box-none">
           <GestureDetector gesture={pan}>
-            <AnimatedLiquidGlassView
-              variant="clear"
-              thickness={settings.barThickness}
-              blurRadius={settings.barBlur}
-              // No dispersion anywhere: iridescence is the artificial
-              // rainbow rim, and it is off.
-              iridescence={0}
-              saturation={settings.saturation}
-              edgeReflectionStrength={settings.barEdgeReflection}
-              legibilityFloor={settings.legibilityFloor}
-              // No `interactive` prop. It made the glass view handle
-              // touches itself for a specular bloom, on top of the Pan
-              // gesture that already owns touches on the bar. The tab
-              // switch crash has survived every other fix, and this is
-              // the one remaining native touch path on the bar, so it
-              // is off until the crash is proven gone. The Pan gesture
-              // still drives the pill and the tap.
-              // No `paused` prop, on purpose. The glass captures live,
-              // every frame, including while scrolling. That is the fix
-              // for the frozen screenshot blur. The old code paused the
-              // capture during every scroll, so the bar held a stale
-              // frame exactly when the backdrop was moving, which is
-              // why it felt like a screenshot. Pausing is gone because
-              // the crash it was guarding against is gone too: the bar
-              // no longer resizes its layout, so there is no
-              // resize-while-capturing to guard against.
-              borderRadius={settings.barRadius}
-              onPipelineReady={(e) => onTier?.(e.nativeEvent.tier)}
-              onError={(e) => console.warn('[glass] bar error', e.nativeEvent)}
+            <Animated.View
               style={[
-                styles.navContainer,
+                styles.bar,
                 { width: navWidth, height: navHeight, borderRadius: settings.barRadius },
                 barShrinkStyle,
               ]}>
-                {/* Tab icons and labels. They live in the bar. The pill
-                    is drawn on top of them, below. */}
-                <View style={styles.iconRow}>
-                  {items.map((item, index) => (
-                    <TabItem
-                      key={item.route}
-                      item={item}
-                      active={index === activeIndex}
-                      inactiveColor={inactiveColor}
-                      labelCollapseStyle={labelCollapseStyle}
-                    />
-                  ))}
-                </View>
+              {/* The bar background, Anivio's GlassBarSurface. A live GPU
+                  blur (expo-blur, the Haze equivalent) of whatever is
+                  behind the bar, with Anivio's dark surface fill
+                  (#1C1C1E at 0.55) on top. No software capture, no
+                  pause, no freeze, no crash: the blur is live because
+                  the GPU does it every frame. */}
+              <BlurView
+                intensity={settings.barBlur}
+                tint="dark"
+                style={[styles.barBackground, { borderRadius: settings.barRadius }]}
+              />
+              <View
+                pointerEvents="none"
+                style={[styles.barFill, { borderRadius: settings.barRadius }]}
+              />
+              {/* Edge highlight: Anivio's vertical white gradient stroke,
+                  strong at the top, fading to nothing at the bottom. */}
+              <Svg
+                pointerEvents="none"
+                style={[styles.barEdge, { borderRadius: settings.barRadius }]}
+                width={navWidth}
+                height={navHeight}>
+                <Defs>
+                  <LinearGradient id="barEdge" x1="0" y1="0" x2="0" y2="1">
+                    <Stop offset="0" stopColor="#FFFFFF" stopOpacity={edgeTop} />
+                    <Stop offset="1" stopColor="#FFFFFF" stopOpacity={edgeBottom} />
+                  </LinearGradient>
+                </Defs>
+                <Rect
+                  x={0.75}
+                  y={0.75}
+                  width={navWidth - 1.5}
+                  height={navHeight - 1.5}
+                  rx={settings.barRadius - 0.75}
+                  fill="none"
+                  stroke="url(#barEdge)"
+                  strokeWidth={1.5}
+                />
+              </Svg>
 
-                {/* The pill. A plain translucent View inside the bar,
-                    not glass, drawn ON TOP of the icons. The active icon
-                    underneath shows through its 0.15 alpha fill. It is
-                    a child of the bar, so the shrink transform scales
-                    it in lockstep with the bar, and its geometry comes
-                    from the bar's fixed size, so it can never drift. */}
-                {activeIndex >= 0 && (
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[styles.pill, pillStyle]}
+              {/* Tab icons and labels. They live in the bar. The pill
+                  is drawn on top of them, below. */}
+              <View style={styles.iconRow}>
+                {items.map((item, index) => (
+                  <TabItem
+                    key={item.route}
+                    item={item}
+                    active={index === activeIndex}
+                    inactiveColor={inactiveColor}
+                    labelCollapseStyle={labelCollapseStyle}
                   />
-                )}
+                ))}
+              </View>
 
-                {/* Touch glow: radial gradient, radius 300, peak alpha
-                    from settings, centered on the finger while dragging
-                    (Anivio JellyDrawing). */}
-                {settings.glowEnabled && (
-                  <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]}>
-                    <Svg width={300} height={300}>
-                      <Defs>
-                        <RadialGradient
-                          id="touchGlow"
-                          cx="150"
-                          cy="150"
-                          r="150"
-                          gradientUnits="userSpaceOnUse"
-                        >
-                          <Stop offset="0" stopColor="#FFFFFF" stopOpacity={settings.glowPeak} />
-                          <Stop offset="0.45" stopColor="#FFFFFF" stopOpacity={settings.glowPeak * 0.43} />
-                          <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
-                        </RadialGradient>
-                      </Defs>
-                      <Circle cx="150" cy="150" r="150" fill="url(#touchGlow)" />
-                    </Svg>
-                  </Animated.View>
-                )}
-              </AnimatedLiquidGlassView>
-            </GestureDetector>
+              {/* The pill. A plain translucent View inside the bar,
+                  not glass, drawn ON TOP of the icons. The active icon
+                  underneath shows through its 0.15 alpha fill. It is
+                  a child of the bar, so the shrink transform scales
+                  it in lockstep with the bar, and its geometry comes
+                  from the bar's fixed size, so it can never drift. */}
+              {activeIndex >= 0 && (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.pill, pillStyle]}
+                />
+              )}
+
+              {/* Touch glow: radial gradient, radius 300, peak alpha
+                  from settings, centered on the finger while dragging
+                  (Anivio JellyDrawing). */}
+              {settings.glowEnabled && (
+                <Animated.View pointerEvents="none" style={[styles.glow, glowStyle]}>
+                  <Svg width={300} height={300}>
+                    <Defs>
+                      <RadialGradient
+                        id="touchGlow"
+                        cx="150"
+                        cy="150"
+                        r="150"
+                        gradientUnits="userSpaceOnUse"
+                      >
+                        <Stop offset="0" stopColor="#FFFFFF" stopOpacity={settings.glowPeak} />
+                        <Stop offset="0.45" stopColor="#FFFFFF" stopOpacity={settings.glowPeak * 0.43} />
+                        <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
+                      </RadialGradient>
+                    </Defs>
+                    <Circle cx="150" cy="150" r="150" fill="url(#touchGlow)" />
+                  </Svg>
+                </Animated.View>
+              )}
+            </Animated.View>
+          </GestureDetector>
         </Animated.View>
       </Animated.View>
     </Animated.View>
@@ -405,8 +426,29 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     zIndex: 1000,
   },
-  navContainer: {
+  bar: {
     flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  barBackground: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  },
+  barFill: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(28, 28, 30, 0.55)',
+  },
+  barEdge: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
   },
   pill: {
     position: 'absolute',
