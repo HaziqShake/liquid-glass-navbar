@@ -60,6 +60,8 @@ jobs:
           target: default
           arch: x86_64
           profile: pixel_6
+          boot-timeout: 1200
+          emulator-options: -no-snapshot -wipe-data -noaudio -no-boot-anim
           script: |
             adb install -r android/app/build/outputs/apk/release/app-release.apk
             adb shell am start -n com.liquidglass.navbar/.MainActivity
