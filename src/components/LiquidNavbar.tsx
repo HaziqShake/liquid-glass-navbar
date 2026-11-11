@@ -52,8 +52,18 @@
  * are re-asserted on every size/layout/attach event and prop change,
  * and every attempt is logged (tags RefractionView and
  * DropletRefractionView), so a device Logcat proves the effect
- * applied. The component still gives both native views an EXPLICIT
- * size (bar/droplet + 48dp) so their size can never be zero.
+ * applied.
+ *
+ * WIRING (rebuilt after build 2 showed none): the native views NEVER
+ * receive animated layout props. Animated width/height applied
+ * directly to a custom native view never produced a real layout size
+ * on device, so the uniforms stayed zero and both views rendered
+ * transparent. Each native view now lives inside a regular host
+ * Animated.View wrapper that carries the animated size (bar/droplet
+ * + 48dp, at -24dp left/top) — animated sizes demonstrably work on
+ * host views, the bar itself resizes on scroll — and the native view
+ * inside uses StyleSheet.absoluteFill only, so its size flows from
+ * Yoga layout through the wrapper.
  *
  * BAR SIZE: driven ONLY by the scroll shrink (labels collapsing). The
  * shrunk bar never grows when switching tabs, and holding never makes
@@ -106,9 +116,6 @@ const OUTSET = 24;
 const HOLD_LIFT = -10;
 /** How much the droplet swells while held (the lens grows, not the bar). */
 const HOLD_SWELL = 0.12;
-
-const AnimatedRefractionView = Animated.createAnimatedComponent(RefractionView);
-const AnimatedDropletView = Animated.createAnimatedComponent(DropletRefractionView);
 
 export interface LiquidTabItem {
   key: string;
@@ -340,11 +347,16 @@ export function LiquidNavbar({
   const barStyle = useAnimatedStyle(() => ({
     borderRadius: barHeight.value / 2,
   }));
-  // The native bar refraction view gets an EXPLICIT size (bar + 48dp)
-  // so its size can never be zero. The native view applies its
-  // RenderEffect eagerly in init and re-asserts its uniforms on every
-  // size/layout/attach event, with a Log.d on every attempt.
-  const barGlassStyle = useAnimatedStyle(() => ({
+  // The bar glass WRAPPER (a regular host view) carries the animated
+  // size — bar + 48dp, so its size can never be zero. The native
+  // RefractionView inside it takes StyleSheet.absoluteFill only and
+  // NEVER receives animated layout props: animated width/height
+  // applied directly to the custom native view never produced a real
+  // layout size on device (build 2), so its uniforms stayed zero and
+  // it rendered transparent. The native view applies its RenderEffect
+  // eagerly in init and re-asserts its uniforms on every size/layout/
+  // attach event, with a Log.d on every attempt.
+  const barGlassWrapStyle = useAnimatedStyle(() => ({
     width: barWidth.value + OUTSET * 2,
     height: barHeight.value + OUTSET * 2,
   }));
@@ -371,10 +383,13 @@ export function LiquidNavbar({
       ],
     };
   });
-  // Same explicit-size rule as the bar glass: the droplet lens is
-  // laid out 24dp larger than its frame on every side, and the
-  // native view applies its effect eagerly in init.
-  const dropletGlassStyle = useAnimatedStyle(() => {
+  // Same wrapper rule as the bar glass: the droplet glass WRAPPER
+  // (a regular host view) carries the animated size — slot + 48dp,
+  // 24dp larger than its frame on every side — and the native
+  // DropletRefractionView inside it takes StyleSheet.absoluteFill
+  // only, never animated layout props. The native view applies its
+  // effect eagerly in init.
+  const dropletGlassWrapStyle = useAnimatedStyle(() => {
     const slot = barWidth.value / tabs.length;
     return {
       width: slot + OUTSET * 2,
@@ -410,12 +425,14 @@ export function LiquidNavbar({
               blurReductionFactor={1}
             />
             {HAS_REFRACTION ? (
-              <AnimatedRefractionView
-                style={[styles.glassFill, barGlassStyle]}
-                glowStrength={settings.refractionStrength}
-                tintMix={TINT_MIX}
-                tintColor={tintColor}
-              />
+              <Animated.View style={[styles.glassFill, barGlassWrapStyle]}>
+                <RefractionView
+                  style={StyleSheet.absoluteFill}
+                  glowStrength={settings.refractionStrength}
+                  tintMix={TINT_MIX}
+                  tintColor={tintColor}
+                />
+              </Animated.View>
             ) : (
               <View style={[StyleSheet.absoluteFill, { backgroundColor: fallbackFill }]} />
             )}
@@ -453,10 +470,12 @@ export function LiquidNavbar({
         <Animated.View style={styles.dropletOverlay} pointerEvents="none">
           <Animated.View style={[styles.dropletFrame, dropletFrameStyle]}>
             {HAS_REFRACTION ? (
-              <AnimatedDropletView
-                style={[styles.dropletGlass, dropletGlassStyle]}
-                magnification={settings.dropletMagnification}
-              />
+              <Animated.View style={[styles.dropletGlass, dropletGlassWrapStyle]}>
+                <DropletRefractionView
+                  style={StyleSheet.absoluteFill}
+                  magnification={settings.dropletMagnification}
+                />
+              </Animated.View>
             ) : null}
           </Animated.View>
         </Animated.View>
@@ -484,7 +503,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     overflow: 'hidden',
   },
-  // Native refraction views sit 24dp beyond the frame on every side.
+  // Glass wrappers sit 24dp beyond the frame on every side.
   glassFill: {
     position: 'absolute',
     left: -OUTSET,

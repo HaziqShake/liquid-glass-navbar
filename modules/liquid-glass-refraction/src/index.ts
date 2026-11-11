@@ -16,10 +16,12 @@
 //
 // Integration: render this INSIDE the bar's overflow-hidden container,
 // above the BlurView, laid out 24dp larger than the bar on every side
-// (explicit width/height = bar + 48, at left/top -24) so the shader's
-// 24dp `outset` region is available and the container clips it to the
-// pill shape. It REPLACES the separate fill View: do not stack a fill
-// on top of it or the tint doubles.
+// — the host-view wrapper carries the animated size (bar + 48, at
+// left/top -24) and the native view inside it takes
+// StyleSheet.absoluteFill — so the shader's 24dp `outset` region is
+// available and the container clips it to the pill shape. It REPLACES
+// the separate fill View: do not stack a fill on top of it or the tint
+// doubles.
 //
 // WHY THE REFRACTION WAS INVISIBLE (10 Nov, build 319f4b0): the shader
 // is Anivio's proven math and the module is linked, but on device the
@@ -30,8 +32,12 @@
 // RenderEffect EAGERLY in init (no size gate — the gate silently
 // never passed in build 1) and re-asserts its uniforms on every
 // size/layout/attach event and prop change, with a Log.d on every
-// attempt; the consumer gives it an explicit width/height
-// so its size can never be zero from negative-inset layout arithmetic.
+// attempt. The consumer must NOT give it an explicit width/height:
+// animated layout props applied directly to the custom native view
+// never produced a real layout size on device (build 2), so the
+// uniforms stayed zero and it rendered transparent. Size it through a
+// regular host-view wrapper that carries the animated size, with the
+// native view inside on StyleSheet.absoluteFill.
 
 import { requireNativeViewManager } from 'expo-modules-core';
 import type { ViewStyle } from 'react-native';
@@ -65,9 +71,11 @@ export type DropletRefractionViewProps = {
 // Haziq's droplet: a completely transparent magnifying lens. No tint,
 // no blur, no fill — the shader only bends the live backdrop. Render
 // it inside an overflow-hidden pill container, laid out 24dp larger
-// than the droplet frame on every side (explicit width/height =
-// frame + 48, at left/top -24) so the shader's 24dp `outset` region
-// is available and the container clips it to the pill shape.
+// than the droplet frame on every side — the host-view wrapper carries
+// the animated size (frame + 48, at left/top -24) and the native view
+// inside it takes StyleSheet.absoluteFill — so the shader's 24dp
+// `outset` region is available and the container clips it to the pill
+// shape.
 export const DropletRefractionView = requireNativeViewManager<DropletRefractionViewProps>(
   'LiquidGlassRefraction',
   'DropletRefractionView',
