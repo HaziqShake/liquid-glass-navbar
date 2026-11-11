@@ -1,63 +1,65 @@
 /**
- * Navbar settings. Plain data, held in React state in DemoScreen.
- * The spring preset scales are mirrored into a Reanimated shared value
- * (see DemoScreen) so the motion worklet can read them.
+ * Navbar settings for Haziq's own liquid glass navbar. Plain data,
+ * held in React state in DemoScreen.
+ *
+ * Only his parameters are here: blur, refraction strength, droplet
+ * magnification, edge light intensity, mode and veil. There are no
+ * spring presets and no coupled-spring settings — this navbar uses
+ * none of those mechanisms.
  */
 
-export type SpringPresetId = 'water' | 'calm' | 'bouncy';
-
-export interface SpringPreset {
-  id: SpringPresetId;
-  label: string;
-  /** Multiplier applied to every spring's stiffness. */
-  stiffnessScale: number;
-  /** Multiplier applied to every spring's damping ratio (clamped to <= 1.0 in the solver). */
-  dampingScale: number;
-}
-
-export const SPRING_PRESETS: SpringPreset[] = [
-  { id: 'water', label: 'Water', stiffnessScale: 1.0, dampingScale: 1.0 },
-  { id: 'calm', label: 'Calm', stiffnessScale: 0.6, dampingScale: 1.25 },
-  { id: 'bouncy', label: 'Bouncy', stiffnessScale: 1.4, dampingScale: 0.7 },
-];
-
-export function findPreset(id: SpringPresetId): SpringPreset {
-  return SPRING_PRESETS.find((p) => p.id === id) ?? SPRING_PRESETS[0];
-}
+export type NavbarMode = 'dark' | 'light';
 
 export interface NavbarSettings {
-  /** expo-blur intensity, 0..100. Default 80. */
+  /** Dark or light navbar. Dark: dark tint + white icons. Light: white
+   *  tint + dark icons. The blur tint, the veil and the refraction
+   *  tint all follow the mode. */
+  mode: NavbarMode;
+  /** expo-blur intensity, 0..100. Default 50. Kept deliberately lighter
+   *  than a heavy frost: a heavy blur washes the backdrop into a
+   *  smooth wash, and a wash has no features left for the refraction
+   *  to bend, so the lens effect disappears. 50 keeps the bar glassy
+   *  while the background keeps enough detail for the bend to show. */
   barBlur: number;
-  /** Fill opacity over the blur, 0..1. iOS 27 default is a moderate tint:
-   * the background stays clearly visible, the glass has some body.
-   * Default 0.30 (lighter and more translucent than Anivio's 0.55). */
-  fillOpacity: number;
-  /** Edge highlight strength, 0..1. Default 0.35 (Anivio's value).
-   * Top edge opacity = 0.27 * (edgeReflection / 0.35). */
-  barEdgeReflection: number;
-  springPreset: SpringPresetId;
-  /** Bar height in dp. Fixed at 64 (Anivio's expanded track height). */
+  /** Refraction strength, 0..1. Maps to the native shader's
+   *  glowStrength (rim sheen / highlight). Default 1. */
+  refractionStrength: number;
+  /** Droplet lens magnification at the rim, 1..1.6. Default 1.25.
+   *  The displacement is zero at the exact centre of the droplet and
+   *  grows toward the rim, so the middle icon reads clean. The lens
+   *  does the magnifying — the icon views are never scaled. */
+  dropletMagnification: number;
+  /** Edge light intensity, 0..1. Scales the corrected edge-light
+   *  gradient stroke (alpha 1 at the top-left and bottom-right
+   *  corners, fading fast to 0). Default 1. */
+  edgeLight: number;
+  /** Legibility veil strength, 0..1. An adaptive veil under the icons
+   *  so they stay readable over clear glass. Dark mode: a dark
+   *  translucent layer. Light mode: a light translucent layer. It sits
+   *  between the glass surface and the icons and never touches the blur
+   *  or the refraction. Default 0.15, deliberately subtle: a heavy veil
+   *  would hide the refraction. */
+  legibilityVeil: number;
+  /** Bar height in dp when labels are shown. Fixed at 64. */
   barHeight: number;
-  /** Bar corner radius. Fixed at 32 (a full pill). */
-  barRadius: number;
-  /** Width the bar shrinks to when labels collapse, as a fraction of full width. */
+  /** Bar width as a fraction of the screen width when labels are shown. */
+  barWidthPct: number;
+  /** Width the bar shrinks to when labels collapse, as a fraction of
+   *  the full bar width. */
   shrunkWidthPct: number;
   /** Height the bar shrinks to when labels collapse, in dp. */
   shrunkHeight: number;
-  glowEnabled: boolean;
-  /** Peak alpha of the touch glow. Anivio uses 0.15. */
-  glowPeak: number;
 }
 
 export const DEFAULT_SETTINGS: NavbarSettings = {
-  barBlur: 80,
-  fillOpacity: 0.3,
-  barEdgeReflection: 0.35,
-  springPreset: 'water',
+  mode: 'dark',
+  barBlur: 50,
+  refractionStrength: 1,
+  dropletMagnification: 1.25,
+  edgeLight: 1,
+  legibilityVeil: 0.15,
   barHeight: 64,
-  barRadius: 32,
+  barWidthPct: 0.9,
   shrunkWidthPct: 0.7,
   shrunkHeight: 50,
-  glowEnabled: true,
-  glowPeak: 0.15,
 };

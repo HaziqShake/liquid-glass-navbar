@@ -24,6 +24,27 @@ class LiquidGlassRefractionModule : Module() {
       Prop("tintMix", RefractionView.DEFAULT_TINT_MIX) { view: RefractionView, tintMix: Float ->
         view.setTintMix(tintMix)
       }
+
+      // Tint colour the shader mixes into the sampled backdrop.
+      // Follows the navbar mode: dark (28,28,30) or white (255,255,255).
+      // This is WHAT colour the tint is, not how much of it there is;
+      // the amount is the fixed tintMix (0.30), never a user setting.
+      Prop("tintColor", RefractionView.DEFAULT_TINT_COLOR.map { it.toDouble() }) { view: RefractionView, tintColor: List<Double> ->
+        if (tintColor.size >= 3) {
+          view.setTintColor(tintColor[0].toFloat(), tintColor[1].toFloat(), tintColor[2].toFloat())
+        }
+      }
+    }
+
+    // Haziq's droplet: a completely transparent magnifying lens. No
+    // tint, no blur, no fill. The magnification is zero at the exact
+    // centre of the lens and grows toward the rim.
+    View(DropletRefractionView::class) {
+      Name("DropletRefractionView")
+
+      Prop("magnification", DropletRefractionView.DEFAULT_MAGNIFICATION) { view: DropletRefractionView, magnification: Float ->
+        view.setMagnification(magnification)
+      }
     }
   }
 }

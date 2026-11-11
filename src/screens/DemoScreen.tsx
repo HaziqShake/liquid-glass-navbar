@@ -1,19 +1,20 @@
 /**
- * Demo screen: a scrolling photo background with the Anivio navbar on top.
+ * Demo screen: a scrolling photo background with Haziq's liquid glass
+ * navbar on top.
  *
  * The background Image + ScrollView are wrapped in a BlurTargetView. The
  * navbar's BlurView points at that target (blurTarget), which is what
- * makes the blur real on Android (see AnivioNavbar).
+ * makes the blur real on Android.
  *
- * Scroll drives the label fraction (Anivio's NuvioNavBarScrollState):
- * accumulate the scroll delta, collapse the labels past 60px down, expand
- * past 60px up, reset the accumulator when the direction changes, expand
- * at the very top. The fraction animates over 300ms with the standard
- * cubic-bezier(0.2, 0, 0, 1). The scroll handler runs on an
- * Animated.ScrollView, never a plain ScrollView with a worklet.
+ * Scroll drives the label fraction: accumulate the scroll delta,
+ * collapse the labels past 60px down, expand past 60px up, reset the
+ * accumulator when the direction changes, expand at the very top. The
+ * fraction animates over 300ms with the standard cubic-bezier(0.2, 0,
+ * 0, 1). The scroll handler runs on an Animated.ScrollView, never a
+ * plain ScrollView with a worklet.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
@@ -24,12 +25,12 @@ import Animated, {
 import { BlurTargetView } from 'expo-blur';
 import { Books, Compass, Gear, House } from 'phosphor-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AnivioNavbar, type TabItem } from '../components/AnivioNavbar';
+import { LiquidNavbar, type LiquidTabItem } from '../components/LiquidNavbar';
 import { SettingsSheet } from '../components/SettingsSheet';
 import { BACKGROUNDS, findBackground } from '../data/backgrounds';
-import { DEFAULT_SETTINGS, findPreset, type NavbarSettings } from '../settings/settings';
+import { DEFAULT_SETTINGS, type NavbarSettings } from '../settings/settings';
 
-const TABS: TabItem[] = [
+const TABS: LiquidTabItem[] = [
   { key: 'home', label: 'Home', icon: House },
   { key: 'explore', label: 'Explore', icon: Compass },
   { key: 'library', label: 'Library', icon: Books },
@@ -41,14 +42,14 @@ const CARDS = [
   { title: 'Night Peaks', body: 'Dark scene, bright stars and a snowy peak above the bar.' },
   { title: 'Ocean Wave', body: 'High-frequency water texture under the bar.' },
   { title: 'Foggy Hills', body: 'Green valley and the road run right under the bar.' },
-  { title: 'Jelly Springs', body: 'Eleven coupled springs. The pill stretches as it travels and settles with a wobble.' },
   { title: 'Live Blur', body: 'The bar blurs whatever is behind it, live, as the list scrolls.' },
-  { title: 'Drag the Bar', body: 'Press and drag across the bar. The pill follows your finger and snaps to the nearest tab.' },
-  { title: 'Tap a Tab', body: 'A tap under 4dp picks the tab under your finger. A longer drag picks the nearest tab.' },
-  { title: 'Scroll to Shrink', body: 'Scroll down and the labels collapse and the bar shrinks. Scroll up to bring them back.' },
-  { title: 'Edge Light', body: 'The rim catches light at the top-left and falls to shadow at the bottom-right.' },
+  { title: 'Refraction', body: 'The background bends at the glass edge. Look at the rim, not the middle.' },
+  { title: 'The Droplet', body: 'A clear lens over the active tab. It magnifies the icon without scaling it. Hold it and it lifts over the bar.' },
+  { title: 'Drag the Bar', body: 'Press and drag across the bar. The droplet follows your finger and snaps to the nearest tab.' },
+  { title: 'Tap a Tab', body: 'A tap picks the tab under your finger. The droplet glides there on one soft spring.' },
+  { title: 'Scroll to Shrink', body: 'Scroll down and the labels collapse and the bar shrinks. Switching tabs never grows it back. Scroll up to bring them back.' },
+  { title: 'Edge Light', body: 'The rim is brightest at the top-left and bottom-right corners and fades fast to nothing along the edges.' },
   { title: 'iOS 27 Default', body: 'Moderate tint. Not crystal clear, not heavily tinted. The photo stays visible through the glass.' },
-  { title: 'Anivio', body: "Tahseen's navbar, translated to Expo React Native. No capture library, no frozen frames." },
 ];
 
 const SCROLL_THRESHOLD = 60;
@@ -65,13 +66,6 @@ export function DemoScreen(): React.JSX.Element {
   const labelFraction = useSharedValue(1);
   const lastOffset = useSharedValue(0);
   const accumulated = useSharedValue(0);
-  const springScales = useSharedValue({ stiffness: 1, damping: 1 });
-
-  // Mirror the spring preset into the shared value the motion worklet reads.
-  useEffect(() => {
-    const preset = findPreset(settings.springPreset);
-    springScales.value = { stiffness: preset.stiffnessScale, damping: preset.dampingScale };
-  }, [settings.springPreset, springScales]);
 
   const onSelect = useCallback((index: number) => {
     setSelectedIndex(index);
@@ -127,8 +121,8 @@ export function DemoScreen(): React.JSX.Element {
             { paddingTop: insets.top + 24, paddingBottom: 140 },
           ]}
         >
-          <Text style={styles.title}>Anivio Navbar</Text>
-          <Text style={styles.subtitle}>Tahseen&apos;s jelly navbar, in Expo React Native</Text>
+          <Text style={styles.title}>Liquid Navbar</Text>
+          <Text style={styles.subtitle}>Haziq&apos;s own liquid glass navbar</Text>
           {CARDS.map((card) => (
             <View key={card.title} style={styles.card}>
               <Text style={styles.cardTitle}>{card.title}</Text>
@@ -146,14 +140,13 @@ export function DemoScreen(): React.JSX.Element {
         <Gear size={22} color="#FFFFFF" weight="regular" />
       </Pressable>
 
-      <AnivioNavbar
+      <LiquidNavbar
         tabs={TABS}
         selectedIndex={selectedIndex}
         onSelect={onSelect}
         labelFraction={labelFraction}
         blurTarget={blurTargetRef}
         settings={settings}
-        springScales={springScales}
       />
 
       {showSettings ? (
