@@ -1,5 +1,7 @@
 /**
- * Haziq's own liquid glass navbar. Written from scratch, 11 Nov 2026.
+ * Haziq's own liquid glass navbar. Rewritten from scratch, 11 Nov 2026
+ * (build 1, commit c52445e, failed on device: the edge light rendered
+ * as a V, and there was no refraction and no droplet at all).
  *
  * A floating pill tab bar in liquid glass: real blur (expo-blur with a
  * BlurTargetView) plus true refraction from the native AGSL RenderEffect
@@ -15,12 +17,43 @@
  * renders OVER the navbar (an unclipped sibling overlay above the bar
  * silhouette), never inside it.
  *
- * EDGE LIGHT (corrected spec, 11 Nov): a gradient stroke around the
- * navbar, alpha 1 brightest at the two opposite corners (top-left and
- * bottom-right), fading fast to 0 at the adjacent sides. Not linear:
- * roughly 25% of an edge is lit near the corner and 75% is
- * transparent. Implemented as a 1px SVG rect stroke with a diagonal
- * gradient, plus a faint 3px halo.
+ * EDGE LIGHT (rebuilt from scratch after build 1 showed a V shape):
+ * two overlapping pill-outline rects, each stroked 1px white, each
+ * with its own radialGradient centred on ONE bright corner — top-left
+ * (cx=0, cy=0) and bottom-right (cx=1, cy=1), r about 0.32, stops 0%
+ * alpha 1, 25% alpha 0.5, 100% alpha 0. No halo rect. Brightness is
+ * a function of DISTANCE FROM THE CORNER, nothing else.
+ *
+ * THE MATH, written out before the code (see EdgeLight below): for a
+ * point on the top edge at bbox-x 0.3, the radial gradient is an
+ * ellipse in screen space with horizontal radius r * barWidth, so
+ * the point sits at normalised distance d = 0.3 / 0.32 = 0.94 of the
+ * way to the gradient edge, and the stops give it alpha
+ * 0.5 * (1 - (0.94 - 0.25) / 0.75) = 0.04 — effectively dark. At
+ * x = 0.16 (d = 0.5) the alpha is 0.33, at x = 0.08 (d = 0.25) it is
+ * 0.5, at the corner itself it is 1. So roughly 25-30% of each
+ * adjacent edge is lit and the rest is transparent, with the falloff
+ * fastest right at the corner.
+ *
+ * This cannot form a V. The old diagonal linear gradient's iso-alpha
+ * lines were straight diagonal lines across the whole pill, so the
+ * bright region was a diagonal band joining the two bright corners —
+ * the V shape seen on device. A radial gradient's iso-alpha contours
+ * are circles (ellipses in screen space) centred on the corner, so
+ * each bright region is an isolated blob hugging its corner. Along
+ * the diagonal between the two corners the distance from BOTH
+ * corners is large (at the centre, ~0.7 of the diagonal from each),
+ * so the middle is transparent: there is no path of high alpha
+ * joining the corners, and no straight diagonal bright band.
+ *
+ * REFRACTION (rebuilt after build 1 showed none): the native views
+ * now apply their RenderEffect EAGERLY in init, with no size gate —
+ * the size gate is what silently never passed on device. Uniforms
+ * are re-asserted on every size/layout/attach event and prop change,
+ * and every attempt is logged (tags RefractionView and
+ * DropletRefractionView), so a device Logcat proves the effect
+ * applied. The component still gives both native views an EXPLICIT
+ * size (bar/droplet + 48dp) so their size can never be zero.
  *
  * BAR SIZE: driven ONLY by the scroll shrink (labels collapsing). The
  * shrunk bar never grows when switching tabs, and holding never makes
@@ -53,7 +86,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { BlurView } from 'expo-blur';
-import { Defs, LinearGradient, Rect, Stop, Svg } from 'react-native-svg';
+import { Defs, RadialGradient, Rect, Stop, Svg } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DropletRefractionView, RefractionView } from 'liquid-glass-refraction';
 import type { NavbarSettings } from '../settings/settings';
@@ -97,24 +130,67 @@ export interface LiquidNavbarProps {
 }
 
 /**
- * The corrected edge light: a 1px gradient stroke around the bar.
- * Alpha 1 at the two opposite corners (top-left and bottom-right),
- * fading fast to 0 — about 25% of each edge lit near the corner, 75%
- * transparent. Plus a faint 3px halo with the same gradient.
+ * The edge light, rebuilt from scratch after build 1 rendered a V.
+ *
+ * TWO overlapping pill-outline rects, each stroked 1px white, each
+ * with its own radialGradient centred on ONE bright corner:
+ * top-left (cx=0, cy=0) and bottom-right (cx=1, cy=1),
+ * gradientUnits="objectBoundingBox", r=0.32, stops 0% alpha 1, 25%
+ * alpha 0.5, 100% alpha 0. No halo rect.
+ *
+ * THE MATH. Brightness is a function of DISTANCE FROM THE CORNER,
+ * nothing else. The gradient is an ellipse in screen space with
+ * horizontal radius r * barWidth, so a point on the top edge at
+ * bbox-x 0.3 sits at normalised distance d = 0.3 / 0.32 = 0.94 of
+ * the way to the gradient edge, and the stops give it alpha
+ * 0.5 * (1 - (0.94 - 0.25) / 0.75) = 0.04: effectively dark. At
+ * x = 0.16 (d = 0.5) alpha is 0.33, at x = 0.08 (d = 0.25) alpha
+ * is 0.5, at the corner itself alpha is 1. Roughly 25-30% of each
+ * adjacent edge is lit, the rest transparent, falloff fastest right
+ * at the corner.
+ *
+ * WHY THIS CANNOT FORM A V. The old diagonal linear gradient's
+ * iso-alpha lines were straight diagonal lines across the whole
+ * pill: the bright region was a diagonal band joining the two bright
+ * corners, which is the V seen on device. A radial gradient's
+ * iso-alpha contours are circles (ellipses in screen space) centred
+ * on the corner, so each bright region is an isolated blob hugging
+ * its corner. Along the diagonal between the two corners the
+ * distance from BOTH corners is large (at the centre, ~0.7 of the
+ * diagonal from each), so the middle is transparent: no path of high
+ * alpha joins the corners, and there is no straight diagonal bright
+ * band.
  */
 function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
   return (
     <Svg style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
       <Defs>
-        <LinearGradient id="liquid-edge" x1="0" y1="0" x2="1" y2="1">
+        <RadialGradient
+          id="liquid-edge-tl"
+          cx="0"
+          cy="0"
+          r="0.32"
+          gradientUnits="objectBoundingBox"
+        >
           <Stop offset="0%" stopColor="#FFFFFF" stopOpacity={1} />
-          <Stop offset="6%" stopColor="#FFFFFF" stopOpacity={0.4} />
-          <Stop offset="12.5%" stopColor="#FFFFFF" stopOpacity={0} />
-          <Stop offset="87.5%" stopColor="#FFFFFF" stopOpacity={0} />
-          <Stop offset="94%" stopColor="#FFFFFF" stopOpacity={0.4} />
-          <Stop offset="100%" stopColor="#FFFFFF" stopOpacity={1} />
-        </LinearGradient>
+          <Stop offset="25%" stopColor="#FFFFFF" stopOpacity={0.5} />
+          <Stop offset="100%" stopColor="#FFFFFF" stopOpacity={0} />
+        </RadialGradient>
+        <RadialGradient
+          id="liquid-edge-br"
+          cx="1"
+          cy="1"
+          r="0.32"
+          gradientUnits="objectBoundingBox"
+        >
+          <Stop offset="0%" stopColor="#FFFFFF" stopOpacity={1} />
+          <Stop offset="25%" stopColor="#FFFFFF" stopOpacity={0.5} />
+          <Stop offset="100%" stopColor="#FFFFFF" stopOpacity={0} />
+        </RadialGradient>
       </Defs>
+      {/* One pill outline per bright corner. Each gradient is
+          transparent everywhere except near its own corner, so the
+          two strokes never add up into a band between them. */}
       <Rect
         x={1}
         y={1}
@@ -122,10 +198,10 @@ function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
         height={98}
         rx={49}
         fill="none"
-        stroke="url(#liquid-edge)"
-        strokeWidth={3}
+        stroke="url(#liquid-edge-tl)"
+        strokeWidth={1}
         vectorEffect="non-scaling-stroke"
-        opacity={0.12 * intensity}
+        opacity={intensity}
       />
       <Rect
         x={1}
@@ -134,7 +210,7 @@ function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
         height={98}
         rx={49}
         fill="none"
-        stroke="url(#liquid-edge)"
+        stroke="url(#liquid-edge-br)"
         strokeWidth={1}
         vectorEffect="non-scaling-stroke"
         opacity={intensity}
@@ -265,15 +341,22 @@ export function LiquidNavbar({
     borderRadius: barHeight.value / 2,
   }));
   // The native bar refraction view gets an EXPLICIT size (bar + 48dp)
-  // so its size can never be zero; its shader is only applied once it
-  // has a real size (see the native view's ensureEffect).
+  // so its size can never be zero. The native view applies its
+  // RenderEffect eagerly in init and re-asserts its uniforms on every
+  // size/layout/attach event, with a Log.d on every attempt.
   const barGlassStyle = useAnimatedStyle(() => ({
     width: barWidth.value + OUTSET * 2,
     height: barHeight.value + OUTSET * 2,
   }));
-  // The droplet frame: one tab slot wide, bar tall. On hold it lifts
-  // above the bar and swells slightly — the lens grows, the bar and the
-  // icons never do.
+
+  // THE DROPLET, rebuilt with the refraction wiring (11 Nov).
+  // A transparent refractive lens, one tab slot wide and bar tall,
+  // living in an unclipped overlay ABOVE the bar. On hold it lifts
+  // above the bar and swells slightly — the lens grows, the bar and
+  // the icons never do. No BlurView anywhere near it: the lens is
+  // the native DropletRefractionView only, which magnifies the icons
+  // through its shader (displacement zero at the exact centre, so
+  // the middle icon reads clean) without scaling any icon view.
   const dropletFrameStyle = useAnimatedStyle(() => {
     const slot = barWidth.value / tabs.length;
     const centre = (dropletPos.value + 0.5) * slot;
@@ -288,7 +371,9 @@ export function LiquidNavbar({
       ],
     };
   });
-  // Same explicit-size rule for the droplet's native lens view.
+  // Same explicit-size rule as the bar glass: the droplet lens is
+  // laid out 24dp larger than its frame on every side, and the
+  // native view applies its effect eagerly in init.
   const dropletGlassStyle = useAnimatedStyle(() => {
     const slot = barWidth.value / tabs.length;
     return {

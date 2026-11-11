@@ -17,20 +17,28 @@
 // view by the hardware renderer; the shader output replaces this
 // view's own (empty) drawing.
 //
-// WHY THE REFRACTION WAS INVISIBLE (10 Nov, build 319f4b0).
-// The shader is Anivio's proven math and the module is linked, but on
-// device the bar showed only the BlurView: no bend at the edges, and
-// the fill setting did nothing. That is exactly what happens when the
-// shader's uniforms are never set: RuntimeShader uniforms default to 0,
-// so `resolution` is (0,0), the capsule SDF collapses, `coverage` is 0
-// for every pixel, and the shader returns transparent everywhere. The
-// old code called setRenderEffect() in init (when width/height are 0)
-// and relied on onSizeChanged alone to set the uniforms later. This
-// version never applies the effect with zeroed uniforms: ensureEffect()
-// only runs once the view has a real size, and it is called from
-// onSizeChanged, onLayout AND onAttachedToWindow (via post, so it runs
-// after the first layout pass). A Log.d line records the size when the
-// effect is applied, so a Logcat shows whether the uniforms were set.
+// WHY BUILD 1 SHOWED NO REFRACTION (11 Nov, commit c52445e).
+// The module was in the APK and the view mounted, but no effect ever
+// appeared. The previous version gated the effect behind
+// a size check: it only called setRenderEffect() once the view had
+// a real size. That gate silently never passed on device — no Logcat
+// line ever proved it did — so the view stayed transparent forever
+// and only the BlurView showed. This version applies the
+// RenderEffect EAGERLY in init (API 33+, shader present) and never
+// gates on size. A zero-size application is harmless: the shader is
+// safe at resolution (0,0) (see the zero-size note below) and renders
+// transparent, then turns real the moment updateUniforms() runs with
+// a real size. The uniforms are re-asserted on EVERY onSizeChanged,
+// onLayout, onAttachedToWindow (via post) and every prop change, and
+// EVERY attempt is logged, so a device Logcat proves exactly what
+// happened instead of failing silently.
+//
+// ZERO-SIZE SAFETY: with resolution (0,0), halfSize = -outset and
+// radius = -outset (both negative), so distanceToEdge = length(local)
+// + outset > 0.5 everywhere and coverage = 1 - smoothstep(...) = 0:
+// the shader returns transparent for every pixel before reaching
+// the normal/depth math. The normal's division is guarded by
+// max(distanceToCenter, 0.001) in any case, so no NaN is possible.
 
 package expo.modules.liquidglassrefraction
 
@@ -77,11 +85,14 @@ class RefractionView(context: Context, appContext: AppContext) : View(context) {
   init {
     // The view draws nothing itself; the RenderEffect output is the
     // refracted backdrop. Keep the background transparent.
-    // NOTE: do NOT apply the RenderEffect here. At construction the
-    // view has no size yet, so the uniforms would all be zero and the
-    // shader would draw transparent. ensureEffect() applies the effect
-    // only once the view has a real size (see onSizeChanged/onLayout).
+    // EAGER: apply the effect NOW, even though the view has no size
+    // yet. Do NOT gate on size — the size gate is what silently
+    // failed in build 1. A zero-size application renders transparent
+    // and turns real as soon as updateUniforms() runs with a real
+    // size, because the shader object is shared and its uniforms
+    // update live.
     setBackgroundColor(android.graphics.Color.TRANSPARENT)
+    applyEffect()
   }
 
   fun setGlowStrength(value: Float) {
@@ -104,23 +115,26 @@ class RefractionView(context: Context, appContext: AppContext) : View(context) {
 
   override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
     super.onSizeChanged(w, h, oldw, oldh)
-    // Size drives the `resolution` uniform; (re)apply the effect so
-    // the lens geometry matches the new frame.
-    ensureEffect()
+    Log.d(TAG, "onSizeChanged: ${w}x${h} (was ${oldw}x${oldh}) effectApplied=$effectApplied")
+    updateUniforms()
   }
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
     super.onLayout(changed, left, top, right, bottom)
-    // Belt and braces next to onSizeChanged: layout is the point where
-    // the size is guaranteed real, so assert the effect here too.
-    if (changed) ensureEffect()
+    Log.d(TAG, "onLayout: changed=$changed size=${width}x${height} effectApplied=$effectApplied")
+    updateUniforms()
   }
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
-    // Attach can precede the first layout; post so this runs after the
-    // layout pass, when width/height are real.
-    post { ensureEffect() }
+    Log.d(TAG, "onAttachedToWindow: size=${width}x${height} effectApplied=$effectApplied")
+    // Attach can precede the first layout; post so this runs after
+    // the layout pass, when width/height are real.
+    post {
+      Log.d(TAG, "onAttachedToWindow(post): size=${width}x${height} effectApplied=$effectApplied")
+      applyEffect()
+      updateUniforms()
+    }
   }
 
   override fun onDetachedFromWindow() {
@@ -129,11 +143,55 @@ class RefractionView(context: Context, appContext: AppContext) : View(context) {
       setRenderEffect(null)
     }
     effectApplied = false
+    Log.d(TAG, "onDetachedFromWindow: effect cleared")
   }
 
+  /**
+   * Apply the RenderEffect. Called eagerly from init and re-asserted
+   * on re-attach. Never gated on size: a zero-size application is
+   * harmless (the shader returns transparent until the uniforms
+   * arrive) and gating is exactly what failed silently in build 1.
+   */
+  private fun applyEffect() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+      Log.d(TAG, "applyEffect: SKIPPED, API ${Build.VERSION.SDK_INT} < 33, no RuntimeShader")
+      return
+    }
+    val shader = shader
+    if (shader == null) {
+      Log.d(TAG, "applyEffect: SKIPPED, shader is null size=${width}x${height}")
+      return
+    }
+    if (effectApplied) {
+      Log.d(TAG, "applyEffect: already applied size=${width}x${height}")
+      return
+    }
+    setRenderEffect(RenderEffect.createRuntimeShaderEffect(shader, "backdrop"))
+    effectApplied = true
+    Log.d(TAG, "applyEffect: EFFECT SET size=${width}x${height} tintMix=$tintMix")
+  }
+
+  /**
+   * Push the current props and size into the shared shader object.
+   * The effect already holds this shader, so the output updates live.
+   * Called on every size/layout/attach event and every prop change.
+   * Also re-asserts the effect if it was ever lost, so no path can
+   * leave the view without one.
+   */
   private fun updateUniforms() {
-    val shader = shader ?: return
-    if (width <= 0 || height <= 0) return
+    val shader = shader
+    if (shader == null) {
+      Log.d(TAG, "updateUniforms: SKIPPED, no shader size=${width}x${height}")
+      return
+    }
+    if (!effectApplied) {
+      Log.d(TAG, "updateUniforms: effect missing, re-applying size=${width}x${height}")
+      applyEffect()
+    }
+    if (width <= 0 || height <= 0) {
+      Log.d(TAG, "updateUniforms: SKIPPED, zero size ${width}x${height} effectApplied=$effectApplied")
+      return
+    }
     val density = resources.displayMetrics.density
     shader.setFloatUniform("resolution", width.toFloat(), height.toFloat())
     shader.setFloatUniform("density", density)
@@ -142,30 +200,7 @@ class RefractionView(context: Context, appContext: AppContext) : View(context) {
     shader.setFloatUniform("tintMix", tintMix)
     shader.setFloatUniform("tintColor", tintColor[0], tintColor[1], tintColor[2])
     invalidate()
-  }
-
-  /**
-   * Apply the RenderEffect, but ONLY once the view has a real size.
-   * Applying it earlier (e.g. in init) leaves the shader uniforms at
-   * zero, which makes the capsule SDF collapse and the shader draw
-   * transparent everywhere — the exact "no refraction, fill does
-   * nothing" failure seen on device. Safe to call repeatedly: it
-   * re-asserts the uniforms and only (re)sets the effect once.
-   */
-  private fun ensureEffect() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-      // Below API 33 there is no RuntimeShader: leave the view
-      // transparent with no effect.
-      return
-    }
-    val shader = shader ?: return
-    if (width <= 0 || height <= 0) return
-    updateUniforms()
-    if (!effectApplied) {
-      setRenderEffect(RenderEffect.createRuntimeShaderEffect(shader, "backdrop"))
-      effectApplied = true
-      Log.d(TAG, "refraction effect applied, size=${width}x${height} tintMix=$tintMix")
-    }
+    Log.d(TAG, "updateUniforms: SET resolution=${width}x${height} density=$density effectApplied=$effectApplied")
   }
 }
 

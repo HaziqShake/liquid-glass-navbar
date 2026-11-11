@@ -26,9 +26,11 @@
 // bar showed only the BlurView and the fill setting did nothing. That
 // is what happens when the shader's uniforms are never set: they
 // default to 0, the capsule SDF collapses, coverage is 0 everywhere
-// and the shader draws transparent. The native view now only applies
-// the RenderEffect once it has a real size (see RefractionView.kt
-// ensureEffect), and the consumer gives it an explicit width/height
+// and the shader draws transparent. The native view now applies the
+// RenderEffect EAGERLY in init (no size gate — the gate silently
+// never passed in build 1) and re-asserts its uniforms on every
+// size/layout/attach event and prop change, with a Log.d on every
+// attempt; the consumer gives it an explicit width/height
 // so its size can never be zero from negative-inset layout arithmetic.
 
 import { requireNativeViewManager } from 'expo-modules-core';
