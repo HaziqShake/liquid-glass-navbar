@@ -38,7 +38,7 @@ export interface NavbarSettings {
    *  so they stay readable over clear glass. Dark mode: a dark
    *  translucent layer. Light mode: a light translucent layer. It sits
    *  between the glass surface and the icons and never touches the blur
-   *  or the refraction. Build 6: 0.05 (was 0.08), deliberately subtle
+   *  or the refraction. Build 7: 0.02 (was 0.05), deliberately subtle
    *  — the bar must read clear, and a heavy veil would hide the
    *  refraction. */
   legibilityVeil: number;
@@ -59,7 +59,7 @@ export const DEFAULT_SETTINGS: NavbarSettings = {
   refractionStrength: 1,
   dropletMagnification: 1.35,
   edgeLight: 1,
-  legibilityVeil: 0.05,
+  legibilityVeil: 0.02,
   barHeight: 64,
   barWidthPct: 0.9,
   shrunkWidthPct: 0.7,

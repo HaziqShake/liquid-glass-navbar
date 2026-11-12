@@ -33,25 +33,28 @@
  * (the bar is overflow visible, so the lift is not clipped) and
  * swells slightly — the lens grows, the bar and the icons never do.
  *
- * BUILD 6 (12 Nov 2026). The bend is now COHERENT (v3): all
- * channels displaced together by 56dp * bend over a 24dp band,
- * and the bent sample is the rim band's base colour — builds 4-5
- * kept the undisplaced sample as the base and the bend only
- * tinted the sheen, so nothing ever visibly moved. The droplet
- * has a bright lens rim now (magnification 1.35) so it reads as
- * a lens, not a flat disc. Bar tuning for clarity: tintMix 0.15,
- * chain blur 6dp at the default setting, veil 0.05.
+ * BUILD 7 (12 Nov 2026). Clarity: chain blur 6dp -> 3dp, tintMix
+ * 0.15 -> 0.10, veil 0.05 -> 0.02. Build 6 on Appetize proved the
+ * refraction works and the droplet is a clear lens, but the bar
+ * still read frosted/milky — the 6dp post-material blur smeared
+ * the whole pill. And the edge light (see EdgeLight below): the
+ * stroke was an ellipse, not a capsule, so it never sat on the rim
+ * near the corners, and the gradients were centred on the bbox
+ * corners instead of the outline corner points — that is why the
+ * bottom-right read faint while the top-left borrowed the shader's
+ * top-weighted highlight. Both fixed in build 7.
  *
  * EDGE LIGHT: two overlapping pill-outline rects, each stroked 1.5px
- * white (build 5: was 1px), each with its own radialGradient centred on ONE bright
- * corner — top-left (cx=0, cy=0) and bottom-right (cx=1, cy=1),
- * r about 0.32, stops 0% alpha 1, 25% alpha 0.5, 100% alpha 0. No
- * halo rect. Brightness is a function of DISTANCE FROM THE CORNER,
- * nothing else: roughly 25-30% of each adjacent edge is lit and
- * the rest is transparent, with the falloff fastest right at the
- * corner. This cannot form a V — a radial gradient's iso-alpha
- * contours are circles centred on the corner, so each bright region
- * is an isolated blob hugging its corner and the middle is dark.
+ * white, each with its own radialGradient centred on ONE bright
+ * corner — the outline's corner point, top-left and bottom-right
+ * (see EdgeLight for the geometry). r about 0.32, stops 0% alpha 1,
+ * 15% alpha 0.6, 100% alpha 0. No halo rect. Brightness is a
+ * function of DISTANCE FROM THE CORNER, nothing else: roughly
+ * 25-30% of each adjacent edge is lit and the rest is transparent,
+ * with the falloff fastest right at the corner. This cannot form a
+ * V — a radial gradient's iso-alpha contours are circles centred on
+ * the corner, so each bright region is an isolated blob hugging its
+ * corner and the middle is dark.
  *
  * BAR SIZE: driven ONLY by the scroll shrink (labels collapsing).
  * The shrunk bar never grows when switching tabs, and holding never
@@ -105,10 +108,10 @@ import type { NavbarSettings } from '../settings/settings';
 const HAS_REFRACTION =
   Platform.OS === 'android' && (Platform.Version as number) >= 33;
 
-/** Fixed bar tint mix. Build 6: 0.15 (was 0.20) — the bar must read
+/** Fixed bar tint mix. Build 7: 0.10 (was 0.15) — the bar must read
  *  CLEAR with the background visible and bending at the rim, not
  *  frosted grey. */
-const TINT_MIX = 0.15;
+const TINT_MIX = 0.10;
 
 /** The native shader samples 24dp beyond the pill on every side. */
 const OUTSET = 24;
@@ -148,34 +151,67 @@ export interface LiquidNavbarProps {
 /**
  * The edge light.
  *
- * TWO overlapping pill-outline rects, each stroked 1.5px white, each
- * with its own radialGradient centred on ONE bright corner:
- * top-left (cx=0, cy=0) and bottom-right (cx=1, cy=1),
- * gradientUnits="objectBoundingBox", r=0.32, stops 0% alpha 1, 15%
- * alpha 0.6, 100% alpha 0. No halo rect. Build 5: the stroke went
- * 1px -> 1.5px and the 25% stop became a 15% stop at alpha 0.6 —
- * a brighter core with the same fast falloff, so the light actually
- * reads on a dark pill instead of a faint top line.
+ * BUILD 7 — TWO GEOMETRY BUGS, both found by measuring the stroke
+ * against the pill instead of trusting the sim (build 5's sim
+ * modelled the stroke as following the capsule, which the SVG did
+ * NOT do, so it measured "symmetric 0.52" while the device showed
+ * a faint bottom-right):
  *
- * THE MATH. Brightness is a function of DISTANCE FROM THE CORNER,
- * nothing else. The gradient is an ellipse in screen space with
- * horizontal radius r * barWidth, so a point on the top edge at
- * bbox-x 0.3 sits at normalised distance d = 0.3 / 0.32 = 0.94 of
- * the way to the gradient edge, and the stops give it alpha
- * 0.5 * (1 - (0.94 - 0.25) / 0.75) = 0.04: effectively dark. At
- * x = 0.16 (d = 0.5) alpha is 0.33, at x = 0.08 (d = 0.25) it is
- * 0.5, at the corner itself it is 1. Roughly 25-30% of each
- * adjacent edge is lit, the rest transparent, falloff fastest right
- * at the corner.
+ * 1. The stroke did not follow the pill. viewBox "0 0 100 100"
+ *    with a 98x98 rect, rx=49, is a CIRCLE in viewBox space; with
+ *    preserveAspectRatio="none" stretched over a ~5.8:1 pill it
+ *    renders as a wide flat ELLIPSE, not a capsule. The ellipse
+ *    only touches the rim at the extreme points; near the ends it
+ *    runs up to ~15dp INSIDE the glass, and it never passes
+ *    through the bright part of the corner gradients — the
+ *    brightest alpha anywhere on the actual stroke was ~0.22, a
+ *    faint streak inside the glass, not a rim light. What read as
+ *    a "bright top-left rim" on device was mostly the shader's own
+ *    top-weighted highlight (upperLight 1.0 at the top, 0.18 at
+ *    the bottom), which is why the bottom-right — no shader boost
+ *    — read faint. The two gradients were symmetric; the SHADER
+ *    is not, and the stroke was not on the rim at either corner.
+ *    FIX: the viewBox now has the bar's own aspect (width =
+ *    aspect * 100, Rect w = aspect * 100 - 2, h = 98, rx = 49),
+ *    so in viewBox space the rect IS a capsule and the stretch
+ *    maps it to a capsule on screen. The aspect is the bar's rest
+ *    aspect (screenWidth * barWidthPct / barHeight); when shrunk
+ *    the aspect drops ~10% and the stroke sits ~2-3dp inside the
+ *    rim at the caps — acceptable, the light matters at rest.
+ *
+ * 2. The gradients were centred on the bbox CORNER (0,0)/(1,1),
+ *    but the pill outline's corner point is inset from the bbox
+ *    corner by the cap radius: the outline point nearest the bbox
+ *    corner is the 45-degree point of the end cap, at bbox
+ *    (0.025, 0.146) for a ~5.8:1 pill. Centred on the bbox corner,
+ *    that outline point sat at 46% of the gradient radius and only
+ *    ever got alpha ~0.38. FIX: each gradient is centred ON its
+ *    outline corner point (TL (0.025, 0.146), BR (0.975, 0.854)),
+ *    so the corner itself gets alpha 1 at both ends, fading along
+ *    the adjacent edges to ~0 by 30% of the edge — roughly 25-30%
+ *    of each adjacent edge lit, the rest transparent, falloff
+ *    fastest right at the corner. Brightness is a function of
+ *    DISTANCE FROM THE CORNER, nothing else, so this cannot form
+ *    a V — a radial gradient's iso-alpha contours are circles
+ *    centred on the corner, so each bright region is an isolated
+ *    blob hugging its corner and the middle is dark.
  */
-function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
+function EdgeLight({ intensity, aspect }: { intensity: number; aspect: number }): React.JSX.Element {
+  const vbW = Math.round(aspect * 100);
+  // Outline corner point: the 45-degree point of the end cap. Cap
+  // centre is (50, 50) in viewBox coords (Rect x=1, rx=49); the
+  // corner is centre minus 49/sqrt(2) in both axes = (15.36, 15.36).
+  // In bbox units (bbox x in [1, vbW-1], y in [1, 99]):
+  // cx = 14.36 / (vbW - 2), cy = 14.36 / 98 = 0.1465.
+  const cx = 14.36 / (vbW - 2);
+  const cy = 14.36 / 98;
   return (
-    <Svg style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
+    <Svg style={StyleSheet.absoluteFill} viewBox={`0 0 ${vbW} 100`} preserveAspectRatio="none">
       <Defs>
         <RadialGradient
           id="liquid-edge-tl"
-          cx="0"
-          cy="0"
+          cx={cx}
+          cy={cy}
           r="0.32"
           gradientUnits="objectBoundingBox"
         >
@@ -185,8 +221,8 @@ function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
         </RadialGradient>
         <RadialGradient
           id="liquid-edge-br"
-          cx="1"
-          cy="1"
+          cx={1 - cx}
+          cy={1 - cy}
           r="0.32"
           gradientUnits="objectBoundingBox"
         >
@@ -201,7 +237,7 @@ function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
       <Rect
         x={1}
         y={1}
-        width={98}
+        width={vbW - 2}
         height={98}
         rx={49}
         fill="none"
@@ -213,7 +249,7 @@ function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
       <Rect
         x={1}
         y={1}
-        width={98}
+        width={vbW - 2}
         height={98}
         rx={49}
         fill="none"
@@ -399,10 +435,16 @@ export function LiquidNavbar({
   const iconInactive = dark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)';
   const veilColor = dark ? '#000000' : '#FFFFFF';
   const fallbackFill = dark ? 'rgba(28,28,30,0.3)' : 'rgba(255,255,255,0.3)';
-  // Blur setting (0-100) maps to the chain blur radius: build 5,
-  // 50 -> 6dp (was 10dp). A lighter blur keeps the background's
-  // detail so the rim bend stays visible; the slider still works.
-  const blurRadiusDp = settings.barBlur * 0.12;
+  // Blur setting (0-100) maps to the chain blur radius: build 7,
+  // 50 -> 3dp (was 6dp). The 6dp post-material blur smeared the
+  // whole pill milky on device; a lighter blur keeps the
+  // background's detail so the rim bend stays visible. The bend
+  // (up to 56dp) still dwarfs a 3dp blur. The slider still works.
+  const blurRadiusDp = settings.barBlur * 0.06;
+  // The edge light's viewBox must have the bar's rest aspect, so
+  // the SVG rect is a capsule on screen (see EdgeLight). At rest
+  // the bar is screenWidth * barWidthPct wide and barHeight tall.
+  const barAspect = (screenWidth * settings.barWidthPct) / settings.barHeight;
 
   return (
     <View style={[styles.root, { bottom: insets.bottom + 16 }]}>
@@ -441,7 +483,7 @@ export function LiquidNavbar({
               <View
                 style={[styles.veil, { backgroundColor: veilColor, opacity: settings.legibilityVeil }]}
               />
-              <EdgeLight intensity={settings.edgeLight} />
+              <EdgeLight intensity={settings.edgeLight} aspect={barAspect} />
             </Animated.View>
             {/* THE DROPLET, build 5: BELOW the icon row, ABOVE the
                 glass. It renders before the icon row (and the icon

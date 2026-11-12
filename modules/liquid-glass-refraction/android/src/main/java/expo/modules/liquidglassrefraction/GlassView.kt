@@ -32,29 +32,29 @@
 //      or the droplet moves, the hash differs and one fresh frame
 //      is captured and painted.
 //
-// BUILD 6 (12 Nov 2026). The mechanism is proven and UNCHANGED —
-// only the shader and the look change:
-//   - Bar shader: the v3 coherent bend, ported exactly (bend band
-//     24dp, all channels displaced TOGETHER by 56dp * bend along
-//     -normal, 6dp tangent spread, +/-4dp chromatic fringe on top).
-//     The displaced sample is now also the rim band's base colour
-//     (mixed in by `bend`), not only the sheen: in builds 4-5 the
-//     base was the undisplaced sample and the bend only modulated
-//     the sheen, which is why no shift was ever visible.
-//   - Effect chain SWAPPED: material shader FIRST, blur AFTER
-//     (createChainEffect(blur, material): Android docs —
-//     createChainEffect(outer, inner) = outer(inner(source)) — so
-//     the blur is the outer effect and runs after the material).
-//     Blur-then-bend displaced an already-soft image and the bend
-//     vanished; bend-then-blur shifts sharp features and the blur
-//     only softens the shifted result. Blur stays 6dp.
-//   - Tint 0.15, veil 0.05 (TS side). Droplet: magnification 1.35
-//     and a bright lens rim with a faint dark ring just inside it,
-//     so the lens reads as a lens, not a flat pale disc.
-//   - GlassDebugState: a build-6 verification aid. The native
-//     state (capture size, navbar found/hidden, effect drawn, last
-//     hash/rect) is exposed to JS so the DemoScreen can print it
-//     on screen. Remove before final delivery.
+// BUILD 6 (12 Nov 2026): bar shader = the v3 coherent bend, ported
+// exactly (bend band 24dp, all channels displaced TOGETHER by
+// 56dp * bend along -normal, 6dp tangent spread, +/-4dp fringe),
+// the displaced sample as the rim band's base colour (builds 4-5
+// kept the undisplaced sample as the base, so nothing ever moved);
+// effect chain SWAPPED to material FIRST, blur AFTER
+// (createChainEffect(blur, material) = blur(material(source))).
+// Droplet: magnification 1.35 and a bright lens rim with a faint
+// dark ring just inside it. GlassDebugState: a build-6
+// verification aid (capture size, navbar found/hidden, effect
+// drawn, last hash/rect) exposed to JS so the DemoScreen can print
+// it on screen. Remove before final delivery.
+//
+// BUILD 7 (12 Nov 2026). Clarity, and the edge light (see
+// LiquidNavbar.tsx — the geometry bug was on the JS side):
+//   - Chain blur 6dp -> 3dp, tint 0.15 -> 0.10, veil 0.05 -> 0.02
+//     (TS side). Build 6 on Appetize: refraction works and the
+//     droplet is a clear lens, but the bar still read frosted/milky
+//     — the 6dp post-material blur smeared the whole pill. The
+//     bend (up to 56dp) still dwarfs a 3dp blur.
+//   - The shader itself is unchanged: the v3 coherent bend, the
+//     top-weighted sheen/highlight (light from above — a glass
+//     cue, kept), the droplet lens rim.
 //
 // PERFORMANCE RULES (all deliberate, do not "optimise" them away):
 //   - ONE shared bitmap per root per frame; bar and droplet share
@@ -69,7 +69,7 @@
 //
 // MODES. One class, two shaders, chosen by the `mode` prop:
 //   - "bar": the Anivio-adapted capsule shader (GlassBarShader.kt,
-//     GPL-3.0, attribution kept below): tintMix 0.15 (build 6),
+//     GPL-3.0, attribution kept below): tintMix 0.10 (build 7),
 //     tint colour by mode, rim sheen, and the v3 COHERENT bend at
 //     the rim (all channels together, 56dp * bend, band 24dp).
 //     The chain blurs AFTER the material, so the bend survives.
@@ -144,14 +144,17 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 
     const val DEFAULT_MODE = "bar"
     const val DEFAULT_GLOW_STRENGTH = 1.0f
-    // Build 6: tint 0.15, not 0.20 — the bar must read CLEAR, not frosted.
-    const val DEFAULT_TINT_MIX = 0.15f
+    // Build 7: tint 0.10, not 0.15 — the bar must read CLEAR, not frosted.
+    const val DEFAULT_TINT_MIX = 0.10f
     // Dark tint (28,28,30), the iOS 27 default fill colour.
     val DEFAULT_TINT_COLOR = floatArrayOf(28f / 255f, 28f / 255f, 30f / 255f)
     // Build 6: magnification 1.35, not 1.25 — the lens must read.
     const val DEFAULT_MAGNIFICATION = 1.35f
-    /** Blur radius in dp at the default Blur setting (50/100). Build 5: 6dp, not 10dp. */
-    const val DEFAULT_BLUR_RADIUS_DP = 6f
+    /** Blur radius in dp at the default Blur setting (50/100). Build 7: 3dp, not 6dp — the 6dp
+     *  post-material blur smeared the whole pill milky on device (build 6 verdict); the bend
+     *  (up to 56dp) still dwarfs a 3dp blur, so the shift survives. If the bend ever washes
+     *  out, drop to 2dp — do NOT move the blur back in front of the material. */
+    const val DEFAULT_BLUR_RADIUS_DP = 3f
   }
 
   private var mode: String = DEFAULT_MODE
@@ -518,9 +521,9 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
    * the bend displaced an already-soft image, so no shift was
    * ever visible and the rim read as a faint line. The bend
    * displaces sharp features by up to 56dp (see the shader), far
-   * more than the 6dp blur that follows it, so the shift survives
+   * more than the 3dp blur that follows it, so the shift survives
    * the blur. If the bend still washes out on device, drop the
-   * blur to 4dp — do NOT move it back in front of the material.
+   * blur to 2dp — do NOT move it back in front of the material.
    * The droplet is a clear lens: material only, no blur.
    */
   private fun buildEffect(shader: RuntimeShader, w: Int, h: Int): RenderEffect? {
@@ -553,7 +556,7 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 // The bar shader is adapted from GlassBarShader.kt in Anivio
 // (https://github.com/mdtahseen7/Anivio), licensed under GPL-3.0.
 // The changes from Anivio's original are:
-// - the `tintMix` uniform (build 6: 0.15, the clear-glass fill)
+// - the `tintMix` uniform (build 7: 0.10, the clear-glass fill)
 //   replacing the hardcoded 0.55 in the surface mix;
 // - the `tintColor` uniform, so the tint follows the navbar mode
 //   (dark #1C1C1E / white) instead of always being dark;
