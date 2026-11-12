@@ -172,14 +172,62 @@
  * MOTION: the droplet glides between tabs on exponential in-out
  * easing (BUILD 10: was one soft spring — elastic, jelly). No
  * coupled spring engine, no squash and stretch, no rubber
- * banding. Hold is a short timed ramp of the magnification only.
+ * banding. Hold is a short timed ramp of the frame growth and the
+ * magnification (BUILD 11).
  *
- * PERFORMANCE. The glass costs one half-resolution root capture per
- * frame, shared by bar + droplet, and only while the backdrop under
- * a view actually changes — a static screen costs zero capture
- * work (the native side hashes its rectangle and skips). The shader
- * runs only over the pill areas, never fullscreen. Two glass views,
- * one bitmap, one GPU pass each.
+ * BUILD 11 (12 Nov 2026). Three things, on Haziq's build 10
+ * verdict (two screenshots) and the need-fit port:
+ * 1. SDK 54 FIRST. The demo is downgraded from Expo SDK 57 to
+ *    SDK 54 (need-fit's version): expo ~54, RN 0.81.5, reanimated
+ *    4.1.x, expo-blur 15, expo-font 14, expo-image-picker 17.
+ *    expo-blur 15 has no BlurTargetView and no blurTarget prop
+ *    (its BlurView blurs what is behind it directly) and renames
+ *    blurMethod to experimentalBlurMethod (no Sdk31Plus variant),
+ *    so the below-API-33 fallback drops the target and uses
+ *    experimentalBlurMethod="dimezisBlurView". The native glass
+ *    never used the target. GlassViewProps.style is now
+ *    StyleProp<ViewStyle> (a RegisteredStyle is not a bare
+ *    ViewStyle under RN 0.81's types).
+ * 2. STRIP CAPTURE. SharedBackdrop captures only the strip
+ *    behind the glass — the union of the glass rects + 16dp margin
+ *    (mirror-band reach ~11.6dp + 3.3dp blur) — instead of the
+ *    full root. The full-root capture was the biggest lag source.
+ *    Each GlassView registers its rect in onPreDraw; the bitmap
+ *    origin is the strip's top edge and GlassView subtracts it
+ *    when mapping its rect, so the bend lands exactly as before.
+ *    The debug readout's `cap` size now reads the strip size.
+ * 3. DROPLET, REBUILT FROM THE BUILD 10 VERDICT. (a) HOLD GROWS
+ *    THE FRAME: on hold the droplet frame itself grows in place
+ *    about its centre to 1.15x the CURRENT bar height — expanded
+ *    64dp -> 73.6dp (bigger than the full bar), shrunk 50dp ->
+ *    57.5dp (bigger than the shrunk bar but below the full bar;
+ *    the corrected brief: relative to the CURRENT bar, never an
+ *    absolute size above the full bar). Build 10 only magnified
+ *    the content while the frame stayed put. No float-up: the
+ *    frame's centroid stays on the bar's centreline at every lift
+ *    value, because top = (barHeight - height) / 2 by
+ *    construction. (b) CONCENTRIC AT REST: the frame is positioned
+ *    by its centre from the bar's CURRENT height (so a shrinking
+ *    bar re-centres it every frame), height = bar height - 2x4dp
+ *    inset, radius = bar radius - inset, uniform inset on all
+ *    sides, no protrusion — build 10's top-inset positioning let
+ *    it sit high and protrude above the shrunk bar on device.
+ *    (c) ICONS CENTRED: the label is absolutely positioned below
+ *    the icon, so the icon — not the icon+label group — is dead
+ *    on the bar centreline (hence dead on the droplet centreline)
+ *    at every label fraction; the label's line box ends at the
+ *    droplet's bottom rim. The glass wrapper tracks the same
+ *    animated height as the frame, so the shader capsule always
+ *    matches it, including on hold.
+ *
+ * PERFORMANCE. The glass costs one half-resolution STRIP capture
+ * per frame (BUILD 11: the union of the glass rects + 16dp
+ * margin, ~145dp tall instead of the ~800dp full root), shared
+ * by bar + droplet, and only while the backdrop under a view
+ * actually changes — a static screen costs zero capture work
+ * (the native side hashes its rectangle and skips). The shader
+ * runs only over the pill areas, never fullscreen. Two glass
+ * views, one bitmap, one GPU pass each.
  *
  * WORKLET SAFETY: no worklet is ever called synchronously from the
  * JS thread. Gesture callbacks call worklets worklet-to-worklet on
@@ -231,18 +279,28 @@ const OUTSET = 24;
  *  height = bar height minus 2x4dp, corner radius =
  *  min(tabWidth, itemHeight)/2. NOT a 48dp circle. */
 const DROPLET_INSET = 4;
+/** BUILD 11 — HOLD FRAME SCALE. On hold the droplet FRAME itself
+ *  grows, in place about its centre, to HOLD_FRAME_SCALE times the
+ *  CURRENT bar height: expanded 64dp -> 73.6dp (bigger than the
+ *  full bar), shrunk 50dp -> 57.5dp (bigger than the shrunk bar
+ *  but still below the full 64dp bar — the corrected brief: the
+ *  hold enlarge is relative to the CURRENT bar height, never an
+ *  absolute size above the full bar). Build 10 only magnified the
+ *  CONTENT 1.35x while the frame stayed the same size; that is
+ *  the gap this closes. The frame NEVER floats: its centroid
+ *  stays on the bar's centreline at every lift value (see
+ *  dropletFrameStyle). */
+const HOLD_FRAME_SCALE = 1.15;
 /** How far the droplet lifts above the bar while held, in dp.
  *  BUILD 10: 0 — REMOVED. Build 9's droplet floated up on hold
  *  and Haziq wants the hold ENLARGE redone instead: on hold the
- *  droplet enlarges in place and does NOT float up. The ONLY
- *  change on hold is the magnification (the shader's uniform zoom
- *  + the icons' matching scale), so the lift term is zero and the
- *  droplet frame stays exactly where it sits. The constant is
- *  kept at 0 (rather than deleting the term) so the removal is
- *  explicit and greppable. `lift` is still the hold progress
- *  (0..1): it now drives only the magnification, and the debug
- *  readout still prints it. */
-const HOLD_LIFT = 0;
+ *  droplet enlarges in place and does NOT float up. BUILD 11:
+ *  there is no lift term at all anymore — the hold enlarge is the
+ *  FRAME growing about the bar's centreline (HOLD_FRAME_SCALE,
+ *  dropletFrameStyle), and the constant below is deleted with it
+ *  rather than kept at 0. `lift` is still the hold progress
+ *  (0..1): it drives the frame growth AND the magnification, and
+ *  the debug readout still prints it. */
 
 /** Icon size in dp; the label is 16dp tall when shown. */
 const ICON_DP = 26;
@@ -262,17 +320,19 @@ export interface LiquidNavbarProps {
    *  screen's scroll handler. This is the ONLY thing that sizes the
    *  bar. */
   labelFraction: SharedValue<number>;
-  /** Ref of the BlurTargetView wrapping the demo content. Only used
-   *  by the below-API-33 expo-blur fallback; the native glass
-   *  captures its own backdrop and never touches this. */
-  blurTarget: React.RefObject<View | null>;
+  /** BUILD 11 (SDK 54): the blurTarget prop is DELETED. expo-blur
+   *  15 (SDK 54) has no BlurTargetView and no blurTarget prop —
+   *  its BlurView blurs what is behind it directly. The fallback
+   *  below API 33 now uses experimentalBlurMethod="dimezisBlurView"
+   *  with no target. The native glass never used this ref. */
   /** 0 = droplet resting over the active tab, 1 = held. Owned by
    *  the DemoScreen (created there) so its 1s debug poll can read
    *  it — the on-screen readout prints the hold progress as ground
    *  truth for the device check. BUILD 10: `lift` is the hold
-   *  PROGRESS now, not a lift distance (HOLD_LIFT is 0): it drives
-   *  only the hold magnification, in the shader (via `held`) and
-   *  in the icons (MagnifiedTabIcon / LensTabIcon). */
+   *  PROGRESS now, not a lift distance: it drives the hold
+   *  magnification, in the shader (via `held`) and in the icons
+   *  (MagnifiedTabIcon / LensTabIcon). BUILD 11: it also drives
+   *  the hold FRAME growth (dropletHeightFor). */
   lift: SharedValue<number>;
   settings: NavbarSettings;
 }
@@ -539,7 +599,6 @@ export function LiquidNavbar({
   selectedIndex,
   onSelect,
   labelFraction,
-  blurTarget,
   lift,
   settings,
 }: LiquidNavbarProps): React.JSX.Element {
@@ -694,50 +753,80 @@ export function LiquidNavbar({
     height: barHeight.value + OUTSET * 2,
   }));
 
-  // THE DROPLET, BUILD 10 (rebuilt from the build 9 droplet).
+  // THE DROPLET, BUILD 11 (rebuilt from the build 10 droplet).
   // Anivio's shape, shape only: a capsule spanning ONE TAB SLOT —
   // width = the tab slot width, height = bar height minus 2x4dp
-  // inset, corner radius = the BAR's radius minus the inset
-  // (barHeight/2 - DROPLET_INSET — the concentric rule, so the
-  // droplet reads as the same pill shape as the bar, not a
-  // differently-rounded capsule), vertically centred on the BAR
+  // inset at rest, corner radius = the BAR's radius minus the
+  // inset (barHeight/2 - DROPLET_INSET — the concentric rule, so
+  // the droplet reads as the same pill shape as the bar, not a
+  // differently-rounded capsule), centred on the BAR's centreline
   // (not on the icon). No jelly scaling (pillScaleX/Y = 1 always),
   // no jelly springs, no rubber banding: the frame only translates
-  // (tab position). BUILD 10: NO HOLD LIFT (HOLD_LIFT is 0) — on
-  // hold the droplet enlarges IN PLACE and does not float up; the
-  // hold magnification is optical — the shader's uniform zoom
-  // about the droplet centre — never a scale transform on the
-  // frame, so there is no HOLD_SWELL either. At rest the droplet
-  // is the same glass as the bar (no magnification, same
-  // refraction + blur); only on hold does it zoom uniformly, and
-  // it KEEPS its blur (driven by the `held` prop into the native
-  // view; the native side eases only the magnification now).
+  // (tab position). BUILD 11: the frame is positioned BY ITS
+  // CENTRE — top = (barHeight - dropletHeight) / 2, computed from
+  // the bar's CURRENT height (so a shrinking bar re-centres it
+  // every frame) — never by a top inset, which is what let build
+  // 10's droplet sit high and protrude above the shrunk bar on
+  // device. And on HOLD the frame itself grows in place about
+  // that same centre to barHeight * HOLD_FRAME_SCALE (1.15x the
+  // CURRENT bar height: bigger than the full bar when expanded,
+  // bigger than the shrunk bar but below the full bar when
+  // shrunk — the corrected brief), with NO float-up: the centroid
+  // stays on the bar's centreline at every lift value, because
+  // top is always (barHeight - height) / 2. The hold magnification
+  // is optical — the shader's uniform zoom about the droplet
+  // centre — and the icons scale with it (see MagnifiedTabIcon /
+  // LensTabIcon). At rest the droplet is the same glass as the bar
+  // (no magnification, same refraction + blur); only on hold does
+  // it zoom uniformly, and it KEEPS its blur (driven by the `held`
+  // prop into the native view; the native side eases only the
+  // magnification now).
+  //
+  // BUILD 11 — one shared height rule, so the frame and its glass
+  // wrapper can never disagree: rest height = bar height minus
+  // 2x inset, held height = bar height x HOLD_FRAME_SCALE,
+  // interpolated by the hold progress (lift 0..1).
+  const dropletHeightFor = (barH: number, liftValue: number): number => {
+    'worklet';
+    const restH = barH - DROPLET_INSET * 2;
+    const heldH = barH * HOLD_FRAME_SCALE;
+    return restH + (heldH - restH) * liftValue;
+  };
   const dropletFrameStyle = useAnimatedStyle(() => {
     const slot = barWidth.value / tabs.length;
-    const height = barHeight.value - DROPLET_INSET * 2;
+    const barH = barHeight.value;
+    const height = dropletHeightFor(barH, lift.value);
     const centreX = (dropletPos.value + 0.5) * slot;
+    // Concentric rounding, interpolated with the same lift value:
+    // at rest the bar's radius minus the inset (so the outline
+    // runs parallel to the bar's outline, uniform inset on all
+    // sides); on hold the frame is a bigger capsule, radius
+    // height/2. The outline is a capsule at every step.
+    const restR = barH / 2 - DROPLET_INSET;
     return {
       width: slot,
       height,
-      // Concentric rounding: the bar's radius (barHeight/2) minus
-      // the droplet's inset. Numerically height/2, expressed as
-      // the rule so it cannot drift from the bar's rounding.
-      borderRadius: barHeight.value / 2 - DROPLET_INSET,
+      borderRadius: restR + (height / 2 - restR) * lift.value,
       transform: [
         { translateX: centreX - slot / 2 },
-        // BUILD 10: HOLD_LIFT is 0 — the droplet never floats up
-        // on hold. It stays exactly where it sits; only the
-        // magnification changes.
-        { translateY: DROPLET_INSET + HOLD_LIFT * lift.value },
+        // BUILD 11: no lift term — the frame grows about the
+        // bar's centreline (see dropletFrameStyle); there is no
+        // HOLD_LIFT anymore and the centroid never leaves the
+        // centreline.
+        { translateY: (barH - height) / 2 },
       ],
     };
   });
   // The droplet glass wrapper: droplet frame + 48dp, at -24dp,
   // so the shader's 24dp `outset` region is available and the
   // frame clips it to the capsule — same arrangement as the bar.
+  // BUILD 11: the wrapper tracks the SAME animated height as the
+  // frame (via dropletHeightFor), so the shader's capsule always
+  // matches the frame — including on hold, when the frame is
+  // taller than the bar.
   const dropletGlassWrapStyle = useAnimatedStyle(() => {
     const slot = barWidth.value / tabs.length;
-    const height = barHeight.value - DROPLET_INSET * 2;
+    const height = dropletHeightFor(barHeight.value, lift.value);
     return {
       width: slot + OUTSET * 2,
       height: height + OUTSET * 2,
@@ -770,9 +859,17 @@ export function LiquidNavbar({
   const barAspect = (screenWidth * settings.barWidthPct) / settings.barHeight;
   // BUILD 9: the droplet's edge light uses the droplet's own rest
   // aspect (slot width over droplet height), so its stroke is a
-  // capsule on the droplet's outline too.
+  // capsule on the droplet's outline too. BUILD 11: on hold the
+  // frame is taller (barHeight * HOLD_FRAME_SCALE), so the aspect
+  // switches with the `held` state — the settled hold state gets
+  // its own exact corner geometry, not the rest aspect stretched.
+  // (Both are the static rest approximations, as before: the live
+  // shrink is a ~10% aspect change the stroke tolerates.)
   const dropletAspect =
-    (screenWidth * settings.barWidthPct) / tabs.length / (settings.barHeight - DROPLET_INSET * 2);
+    (screenWidth * settings.barWidthPct) / tabs.length /
+    (held
+      ? settings.barHeight * HOLD_FRAME_SCALE
+      : settings.barHeight - DROPLET_INSET * 2);
 
   return (
     <View style={[styles.root, { bottom: insets.bottom + 16 }]}>
@@ -806,8 +903,12 @@ export function LiquidNavbar({
                     style={StyleSheet.absoluteFill}
                     intensity={settings.barBlur}
                     tint={dark ? 'dark' : 'light'}
-                    blurMethod="dimezisBlurViewSdk31Plus"
-                    blurTarget={blurTarget}
+                    // BUILD 11 (SDK 54): expo-blur 15 renamed
+                    // blurMethod to experimentalBlurMethod and
+                    // dropped the Sdk31Plus variant (dimezisBlurView
+                    // now covers it) and the blurTarget prop — the
+                    // BlurView blurs what is behind it directly.
+                    experimentalBlurMethod="dimezisBlurView"
                     blurReductionFactor={1}
                   />
                   <View style={[StyleSheet.absoluteFill, { backgroundColor: fallbackFill }]} />
@@ -818,7 +919,7 @@ export function LiquidNavbar({
               />
               <EdgeLight intensity={settings.edgeLight} aspect={barAspect} />
             </Animated.View>
-            {/* THE DROPLET, BUILD 10 (rebuilt from the build 9
+            {/* THE DROPLET, BUILD 11 (rebuilt from the build 10
                 droplet): ABOVE the icon row (zIndex 3 vs the row's
                 2) and above the bar glass — over the navbar AND
                 over the icons, not below the icons as in builds
@@ -836,8 +937,10 @@ export function LiquidNavbar({
                 under the glass, not pasted on top. Build 9's
                 DropletTabDup (above the edge light as well as the
                 glass) is removed. On hold the droplet does NOT
-                lift (HOLD_LIFT is 0) and does NOT drop its blur:
-                the ONLY change on hold is the magnification. It
+                lift and does NOT drop its blur: the frame GROWS in
+                place about the bar's centreline (BUILD 11,
+                HOLD_FRAME_SCALE 1.15x the CURRENT bar height)
+                and the content magnifies 1.35x. It
                 never intercepts touches. */}
             <Animated.View style={[styles.dropletOverlay, { zIndex: 3 }]} pointerEvents="none">
               <Animated.View style={[styles.dropletFrame, dropletFrameStyle]}>
@@ -983,6 +1086,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   labelWrap: {
+    // BUILD 11 — ICON CENTERING. The label is positioned
+    // ABSOLUTELY below the icon (top = slot centre + half the
+    // icon height) instead of sitting under it in flow. Before,
+    // the icon + label were centred as a GROUP, so the icon sat
+    // 8dp above the slot centre (half the 16dp label) while the
+    // droplet — centred on the slot — sat on the centreline: the
+    // icon was never at the droplet's centre, and as the labels
+    // collapsed the icon drifted down toward the centre. Now the
+    // icon is dead on the bar centreline (hence dead on the
+    // droplet centreline) at every label fraction, and the label
+    // hangs below it: its 14dp line box ends right at the
+    // droplet's bottom rim (icon bottom at centre + 13dp, label
+    // text 14dp tall centred in the 16dp wrap). left/right 0 so
+    // the wrap spans the slot and the text stays centred.
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '50%',
+    marginTop: ICON_DP / 2,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',

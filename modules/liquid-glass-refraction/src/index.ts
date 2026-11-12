@@ -30,10 +30,12 @@
 //      capture work.
 //
 // PERFORMANCE. One shared bitmap per root per frame (bar + droplet
-// share it, never one capture each); capture at scale 2; capture
-// only in onPreDraw and only while shown; bitmap freed when the
-// last glass view unmounts; shader work only over the pill areas,
-// never fullscreen. No expo-blur in the bar path: the RenderEffect
+// share it, never one capture each); capture at scale 2; BUILD 11:
+// capture only the STRIP behind the glass (union of the glass
+// rects + 16dp margin), never the full root; capture only in
+// onPreDraw and only while shown; bitmap freed when the last glass
+// view unmounts; shader work only over the pill areas, never
+// fullscreen. No expo-blur in the bar path: the RenderEffect
 // chain does the blur (bar only) and the refraction in one GPU
 // pass. No extra dependencies.
 //
@@ -52,7 +54,7 @@
 // fake white circle.
 
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
-import type { ViewStyle } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 export type GlassViewProps = {
   /** "bar" = capsule glass with tint + rim sheen + blur; "droplet" =
@@ -97,7 +99,11 @@ export type GlassViewProps = {
    *  droplet keeps this blur at rest AND on hold. Default 3.3dp
    *  (Blur setting 55). */
   blurRadius?: number;
-  style?: ViewStyle;
+  /** BUILD 11 (SDK 54): StyleProp, not bare ViewStyle — a
+   *  RegisteredStyle (e.g. StyleSheet.absoluteFill) is assignable
+   *  to StyleProp but not to a bare ViewStyle, and tsc on RN 0.81
+   *  rejects it. */
+  style?: StyleProp<ViewStyle>;
 };
 
 // Verified against the installed expo-modules-core 57.0.25: SDK 57

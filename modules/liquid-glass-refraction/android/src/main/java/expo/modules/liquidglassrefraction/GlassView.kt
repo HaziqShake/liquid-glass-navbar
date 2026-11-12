@@ -136,6 +136,9 @@
 //   - ONE shared bitmap per root per frame; bar and droplet share
 //     it, never one capture each.
 //   - Capture at scale 2 (half resolution).
+//   - BUILD 11: capture only the STRIP behind the glass (the union
+//     of the glass rects + 16dp margin), never the full root — the
+//     full-root capture was the biggest lag source.
 //   - Capture only in onPreDraw, only while the view is shown.
 //   - The bitmap is freed when the last glass view unmounts.
 //   - The shader runs only over the pill areas (this view's rect),
@@ -425,6 +428,9 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   override fun onDetachedFromWindow() {
     val observer = viewTreeObserver
     if (observer.isAlive) observer.removeOnPreDrawListener(this)
+    // BUILD 11: drop this view's rect from the strip union, so a
+    // stale rect can never keep the strip tall after unmount.
+    shared?.removeRect(this)
     SharedBackdrop.release(rootView, shared)
     shared = null
     haveGoodCapture = false
@@ -436,11 +442,19 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   override fun onPreDraw(): Boolean {
     if (SharedBackdrop.capturing || width <= 0 || height <= 0) return true
     // A paused or off-screen view keeps its last frame and stops
-    // doing the one expensive thing here: a full software
-    // root.draw() into the shared bitmap.
+    // doing the one expensive thing here: a software draw of the
+    // backdrop strip into the shared bitmap.
     if (!isShown) return true
     val root = rootView ?: return true
     val cap = shared ?: return true
+    // BUILD 11 — STRIP CAPTURE: register this view's rectangle in
+    // root pixels before triggering the capture, so the strip is
+    // the union of the glass rects (bar + droplet) and follows a
+    // gliding droplet, a shrinking bar and a held droplet that has
+    // grown past the bar. The capture itself reads the union.
+    if (viewRectInRoot(curRect)) {
+      cap.updateRect(this, curRect)
+    }
     // BUILD 5 — HIDE THE WHOLE NAVBAR WHILE CAPTURING. Build 4's
     // capture drew the entire root, so the bitmap contained the
     // bar's own veil (dark, drawn ON TOP of the glass), the white
@@ -582,15 +596,34 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   }
 
   /**
-   * This view's rectangle inside the shared, root-sized backdrop
-   * bitmap (bitmap coordinates are root pixels / CAPTURE_SCALE).
+   * This view's rectangle in ROOT pixels (full resolution), for the
+   * BUILD 11 strip union. False when the root is gone.
+   */
+  private fun viewRectInRoot(out: Rect): Boolean {
+    val root = rootView ?: return false
+    getLocationInWindow(locThis)
+    root.getLocationInWindow(locRoot)
+    val left = locThis[0] - locRoot[0]
+    val top = locThis[1] - locRoot[1]
+    out.set(left, top, left + width, top + height)
+    return true
+  }
+
+  /**
+   * This view's rectangle inside the shared backdrop bitmap
+   * (bitmap coordinates are root pixels / CAPTURE_SCALE).
+   * BUILD 11: the bitmap holds only the STRIP behind the glass,
+   * whose origin is the strip's top edge in root pixels — subtract
+   * it (bitmapOriginY), so the rect lands on the same pixels it
+   * would have in a full-root bitmap and the bend is unchanged.
    */
   private fun viewRectInBitmap(bmp: Bitmap, out: Rect): Boolean {
     val root = rootView ?: return false
     getLocationInWindow(locThis)
     root.getLocationInWindow(locRoot)
+    val originY = shared?.bitmapOriginY() ?: 0
     val left = (locThis[0] - locRoot[0]) / CAPTURE_SCALE
-    val top = (locThis[1] - locRoot[1]) / CAPTURE_SCALE
+    val top = (locThis[1] - locRoot[1] - originY) / CAPTURE_SCALE
     val right = left + width / CAPTURE_SCALE
     val bottom = top + height / CAPTURE_SCALE
     if (right <= 0 || bottom <= 0 || left >= bmp.width || top >= bmp.height) return false

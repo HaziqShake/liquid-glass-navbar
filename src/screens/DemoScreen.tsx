@@ -2,9 +2,12 @@
  * Demo screen: a scrolling photo background with Haziq's liquid glass
  * navbar on top.
  *
- * The background Image + ScrollView are wrapped in a BlurTargetView. The
- * navbar's BlurView points at that target (blurTarget), which is what
- * makes the blur real on Android.
+ * BUILD 11 (SDK 54): expo-blur 15 has no BlurTargetView — the
+ * background Image + ScrollView are wrapped in a plain View now.
+ * The below-API-33 fallback BlurView blurs what is behind it
+ * directly (experimentalBlurMethod="dimezisBlurView"); the native
+ * glass on API 33+ captures its own backdrop and never needed a
+ * target.
  *
  * Scroll drives the label fraction: accumulate the scroll delta,
  * collapse the labels past 60px down, expand past 60px up, reset the
@@ -14,7 +17,7 @@
  * plain ScrollView with a worklet.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
@@ -22,7 +25,6 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import { BlurTargetView } from 'expo-blur';
 import { Books, Compass, Gear, House } from 'phosphor-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LiquidNavbar, type LiquidTabItem } from '../components/LiquidNavbar';
@@ -77,8 +79,9 @@ export function DemoScreen(): React.JSX.Element {
   // BUILD 8 verification aid: the hold progress, owned here so
   // the 1s poll below can read it (the navbar only animates it).
   // Printed as a third debug line, e.g. "lift 1.00" mid-hold.
-  // BUILD 10: `lift` is hold progress 0..1 (HOLD_LIFT is 0 — the
-  // droplet no longer lifts); it drives the hold magnification.
+  // BUILD 10: `lift` is hold progress 0..1 (the droplet no longer
+  // lifts); it drives the hold magnification. BUILD 11: it also
+  // drives the hold FRAME growth (1.15x the current bar height).
   // Remove before final delivery, with the rest of the readout.
   const lift = useSharedValue(0);
   useEffect(() => {
@@ -99,7 +102,6 @@ export function DemoScreen(): React.JSX.Element {
     };
   }, [lift]);
 
-  const blurTargetRef = useRef<View>(null);
   const labelFraction = useSharedValue(1);
   const lastOffset = useSharedValue(0);
   const accumulated = useSharedValue(0);
@@ -147,7 +149,7 @@ export function DemoScreen(): React.JSX.Element {
 
   return (
     <View style={styles.root}>
-      <BlurTargetView ref={blurTargetRef} style={styles.target}>
+      <View style={styles.target}>
         <Image source={background.source} style={StyleSheet.absoluteFill} resizeMode="cover" />
         <Animated.ScrollView
           onScroll={scrollHandler}
@@ -167,7 +169,7 @@ export function DemoScreen(): React.JSX.Element {
             </View>
           ))}
         </Animated.ScrollView>
-      </BlurTargetView>
+      </View>
 
       <Pressable
         style={[styles.settingsButton, { top: insets.top + 12 }]}
@@ -185,7 +187,6 @@ export function DemoScreen(): React.JSX.Element {
         selectedIndex={selectedIndex}
         onSelect={onSelect}
         labelFraction={labelFraction}
-        blurTarget={blurTargetRef}
         lift={lift}
         settings={settings}
       />
