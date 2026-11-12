@@ -24,10 +24,11 @@ export interface NavbarSettings {
   /** Refraction strength, 0..1. Maps to the native shader's
    *  glowStrength (rim sheen / highlight). Default 1. */
   refractionStrength: number;
-  /** Droplet lens magnification at the rim, 1..1.6. Default 1.25.
-   *  The displacement is zero at the exact centre of the droplet and
-   *  grows toward the rim, so the middle icon reads clean. The lens
-   *  does the magnifying — the icon views are never scaled. */
+  /** Droplet lens magnification at the rim, 1..1.6. Default 1.35
+   *  (build 6, was 1.25). The displacement is zero at the exact
+   *  centre of the droplet and grows toward the rim, so the middle
+   *  icon reads clean. The lens does the magnifying — the icon
+   *  views are never scaled. */
   dropletMagnification: number;
   /** Edge light intensity, 0..1. Scales the corrected edge-light
    *  gradient stroke (alpha 1 at the top-left and bottom-right
@@ -37,8 +38,9 @@ export interface NavbarSettings {
    *  so they stay readable over clear glass. Dark mode: a dark
    *  translucent layer. Light mode: a light translucent layer. It sits
    *  between the glass surface and the icons and never touches the blur
-   *  or the refraction. Build 5: 0.08, deliberately subtle — the bar
-   *  must read clear, and a heavy veil would hide the refraction. */
+   *  or the refraction. Build 6: 0.05 (was 0.08), deliberately subtle
+   *  — the bar must read clear, and a heavy veil would hide the
+   *  refraction. */
   legibilityVeil: number;
   /** Bar height in dp when labels are shown. Fixed at 64. */
   barHeight: number;
@@ -55,9 +57,9 @@ export const DEFAULT_SETTINGS: NavbarSettings = {
   mode: 'dark',
   barBlur: 50,
   refractionStrength: 1,
-  dropletMagnification: 1.25,
+  dropletMagnification: 1.35,
   edgeLight: 1,
-  legibilityVeil: 0.08,
+  legibilityVeil: 0.05,
   barHeight: 64,
   barWidthPct: 0.9,
   shrunkWidthPct: 0.7,

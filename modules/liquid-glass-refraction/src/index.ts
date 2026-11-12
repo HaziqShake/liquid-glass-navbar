@@ -47,7 +47,7 @@
 // expo-blur (bar) / nothing (droplet) — never a crash, never a
 // fake white circle.
 
-import { requireNativeViewManager } from 'expo-modules-core';
+import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
 import type { ViewStyle } from 'react-native';
 
 export type GlassViewProps = {
@@ -56,7 +56,7 @@ export type GlassViewProps = {
   mode?: 'bar' | 'droplet';
   /** Strength of the bar's rim sheen / highlight. Default 1.0. */
   glowStrength?: number;
-  /** Mix of the tint colour into the sampled backdrop. Build 5: 0.20
+  /** Mix of the tint colour into the sampled backdrop. Build 6: 0.15
    *  (clear glass). Not a user setting. */
   tintMix?: number;
   /** Tint colour the bar shader mixes in: dark [28/255, 28/255,
@@ -64,7 +64,7 @@ export type GlassViewProps = {
   tintColor?: [number, number, number];
   /** Droplet lens magnification at the rim. 1.0 is no lens. The
    *  displacement is zero at the exact centre and grows toward the
-   *  rim, so the middle icon reads clean. Default 1.25. */
+   *  rim, so the middle icon reads clean. Default 1.35 (build 6). */
   magnification?: number;
   /** Bar blur radius in dp for the chain blur effect. The droplet
    *  never blurs. Default 10dp. */
@@ -79,3 +79,20 @@ export const GlassView = requireNativeViewManager<GlassViewProps>(
   'LiquidGlassRefraction',
   'GlassView',
 );
+
+// BUILD 6 verification aid. The native glass state as a two-line
+// string, for the on-screen debug readout in the DemoScreen:
+//   "cap 540x1200 | nav Y hid Y | drawn Y (bar)
+//    hash 1a2b3c4d | rect 24,890,372,1012"
+// cap = shared backdrop bitmap size; nav = a navbar root was found;
+// hid = it was actually hidden during the last capture; drawn = the
+// RenderEffect path drew at least once; hash/rect = the last
+// backdrop hash and this view's rectangle in the bitmap. REMOVE
+// before final delivery, with the readout and GlassDebugState.
+const GlassModule = requireNativeModule<{
+  getGlassDebug: () => Promise<string>;
+}>('LiquidGlassRefraction');
+
+export async function getGlassDebug(): Promise<string> {
+  return GlassModule.getGlassDebug();
+}

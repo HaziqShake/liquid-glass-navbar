@@ -14,7 +14,7 @@
  * plain ScrollView with a worklet.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
@@ -27,6 +27,7 @@ import { Books, Compass, Gear, House } from 'phosphor-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LiquidNavbar, type LiquidTabItem } from '../components/LiquidNavbar';
 import { SettingsSheet } from '../components/SettingsSheet';
+import { getGlassDebug } from 'liquid-glass-refraction';
 import { BACKGROUNDS, findBackground } from '../data/backgrounds';
 import { DEFAULT_SETTINGS, type NavbarSettings } from '../settings/settings';
 
@@ -61,6 +62,34 @@ export function DemoScreen(): React.JSX.Element {
   const [backgroundId, setBackgroundId] = useState(BACKGROUNDS[0].id);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
+  // BUILD 6 verification aid (remove before final delivery): the
+  // native glass state, printed top-left, refreshed once a second
+  // via the module's getGlassDebug async function. Format:
+  //   "cap 540x1200 | nav Y hid Y | drawn Y (bar)
+  //    hash 1a2b3c4d | rect 24,890,372,1012"
+  // cap = shared backdrop bitmap size; nav = a navbar root was
+  // found; hid = it was actually hidden during the last capture;
+  // drawn = the RenderEffect path drew at least once. If this
+  // reads nav N hid N on device, findNavbarRoot failed and the
+  // capture still contains the navbar (build 4 behaviour).
+  const [debugText, setDebugText] = useState('glass: …');
+  useEffect(() => {
+    let alive = true;
+    const tick = async (): Promise<void> => {
+      try {
+        const s = await getGlassDebug();
+        if (alive) setDebugText(s);
+      } catch {
+        if (alive) setDebugText('glass: unavailable');
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
 
   const blurTargetRef = useRef<View>(null);
   const labelFraction = useSharedValue(1);
@@ -140,6 +169,9 @@ export function DemoScreen(): React.JSX.Element {
         <Gear size={22} color="#FFFFFF" weight="regular" />
       </Pressable>
 
+      {/* BUILD 6 debug readout (remove before final delivery). */}
+      <Text style={[styles.debugText, { top: insets.top + 8 }]}>{debugText}</Text>
+
       <LiquidNavbar
         tabs={TABS}
         selectedIndex={selectedIndex}
@@ -213,5 +245,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 20,
+  },
+  // BUILD 6 debug readout (remove before final delivery). Top-left,
+  // small monospace on a dark pill, out of the way of the bar and
+  // the settings gear (top-right).
+  debugText: {
+    position: 'absolute',
+    left: 12,
+    zIndex: 30,
+    fontFamily: 'monospace',
+    fontSize: 10,
+    lineHeight: 14,
+    color: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
   },
 });

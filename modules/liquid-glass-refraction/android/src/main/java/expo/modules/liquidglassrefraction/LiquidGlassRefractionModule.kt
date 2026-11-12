@@ -22,6 +22,20 @@ class LiquidGlassRefractionModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LiquidGlassRefraction")
 
+    // BUILD 6 verification aid: the native glass state, as a
+    // two-line string, refreshed by the DemoScreen about once a
+    // second and printed on screen. Format:
+    //   "cap 540x1200 | nav Y hid Y | drawn Y (bar)
+    //    hash 1a2b3c4d | rect 24,890,372,1012"
+    // cap = shared backdrop bitmap size; nav = a navbar root was
+    // found; hid = it was actually hidden during the last capture;
+    // drawn = the RenderEffect path drew at least once; hash/rect
+    // = the last backdrop hash and this view's rectangle in the
+    // bitmap. REMOVE before final delivery.
+    AsyncFunction("getGlassDebug") {
+      GlassDebugState.snapshot()
+    }
+
     View(GlassView::class) {
       Name("GlassView")
 
@@ -40,7 +54,7 @@ class LiquidGlassRefractionModule : Module() {
       // Tint colour the shader mixes into the sampled backdrop.
       // Follows the navbar mode: dark (28,28,30) or white (255,255,255).
       // This is WHAT colour the tint is, not how much of it there is;
-      // the amount is the fixed tintMix (0.30), never a user setting.
+      // the amount is the fixed tintMix (0.15, build 6), never a user setting.
       Prop("tintColor", GlassView.DEFAULT_TINT_COLOR.map { it.toDouble() }) { view: GlassView, tintColor: List<Double> ->
         if (tintColor.size >= 3) {
           view.setTintColor(tintColor[0].toFloat(), tintColor[1].toFloat(), tintColor[2].toFloat())
@@ -49,7 +63,7 @@ class LiquidGlassRefractionModule : Module() {
 
       // Lens magnification at the rim of the droplet. 1.0 is no lens.
       // The displacement is zero at the exact centre and grows toward
-      // the rim, so the middle icon reads clean. Default 1.25.
+      // the rim, so the middle icon reads clean. Default 1.35 (build 6).
       Prop("magnification", GlassView.DEFAULT_MAGNIFICATION) { view: GlassView, magnification: Float ->
         view.setMagnification(magnification)
       }

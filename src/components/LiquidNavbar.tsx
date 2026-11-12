@@ -16,11 +16,12 @@
  * modules/liquid-glass-refraction for the native side.
  *
  * THE GLASS. A floating pill tab bar. The bar is real glass now:
- * the captured backdrop, blurred in the RenderEffect chain, then
- * bent at the rim by the capsule shader (tint fixed at 0.20, build 5).
- * No expo-blur in the bar path anymore — the chain does blur +
- * refraction in one GPU pass, not two. Below API 33 the bar falls
- * back to a plain expo-blur pill, never a crash.
+ * the captured backdrop, bent at the rim by the capsule shader
+ * (tint fixed at 0.15, build 6) and then blurred in the
+ * RenderEffect chain — material FIRST, blur AFTER, so the bend
+ * survives. No expo-blur in the bar path anymore — the chain does
+ * refraction + blur in one GPU pass, not two. Below API 33 the bar
+ * falls back to a plain expo-blur pill, never a crash.
  *
  * THE DROPLET (Haziq's term): a completely transparent, refractive
  * lens, 48dp, resting INSIDE the bar over the active tab. No fill,
@@ -32,21 +33,14 @@
  * (the bar is overflow visible, so the lift is not clipped) and
  * swells slightly — the lens grows, the bar and the icons never do.
  *
- * BUILD 5 (12 Nov 2026). Build 4's capture drew the whole root, so
- * the bitmap held the navbar itself (veil, white icons, edge light,
- * labels) and the bar came out a dark frosted pill, the droplet a
- * pale disc. The native side now hides the navbar root while it
- * captures, so the bitmap is background-only. The droplet therefore
- * lives BELOW the icon row in z-order now — inside the bar, above
- * the glass + veil, below the icons — so the real icon stays razor
- * sharp on top of the lens and the lens bends only the background
- * behind it, clearer than the bar (the Instagram/App Store
- * reference: the droplet is clearer than the navbar). The icon
- * itself is NOT magnified: it is crisp on top, the background
- * magnifies through the lens. If Haziq asks for the icon itself
- * to magnify, that is a follow-up needing an icons-only capture
- * layer, not this build. Bar tuning for clarity: tintMix 0.20,
- * chain blur 6dp at the default setting, veil 0.08.
+ * BUILD 6 (12 Nov 2026). The bend is now COHERENT (v3): all
+ * channels displaced together by 56dp * bend over a 24dp band,
+ * and the bent sample is the rim band's base colour — builds 4-5
+ * kept the undisplaced sample as the base and the bend only
+ * tinted the sheen, so nothing ever visibly moved. The droplet
+ * has a bright lens rim now (magnification 1.35) so it reads as
+ * a lens, not a flat disc. Bar tuning for clarity: tintMix 0.15,
+ * chain blur 6dp at the default setting, veil 0.05.
  *
  * EDGE LIGHT: two overlapping pill-outline rects, each stroked 1.5px
  * white (build 5: was 1px), each with its own radialGradient centred on ONE bright
@@ -111,9 +105,10 @@ import type { NavbarSettings } from '../settings/settings';
 const HAS_REFRACTION =
   Platform.OS === 'android' && (Platform.Version as number) >= 33;
 
-/** Fixed bar tint mix. Build 5: 0.20 — the bar must read CLEAR with the
- *  background visible and bending at the rim, not frosted grey. */
-const TINT_MIX = 0.2;
+/** Fixed bar tint mix. Build 6: 0.15 (was 0.20) — the bar must read
+ *  CLEAR with the background visible and bending at the rim, not
+ *  frosted grey. */
+const TINT_MIX = 0.15;
 
 /** The native shader samples 24dp beyond the pill on every side. */
 const OUTSET = 24;

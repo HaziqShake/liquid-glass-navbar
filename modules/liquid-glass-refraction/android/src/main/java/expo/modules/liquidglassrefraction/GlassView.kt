@@ -32,18 +32,29 @@
 //      or the droplet moves, the hash differs and one fresh frame
 //      is captured and painted.
 //
-// BUILD 5 (12 Nov 2026). Build 4's capture drew the WHOLE root, so
-// the bitmap contained the navbar itself: the bar's veil, the white
-// icons, the edge light and the labels — blurred and tinted again
-// by the shader, which is why the bar was a dark frosted pill and
-// the droplet a pale disc. Now onPreDraw hides the navbar root
-// (INVISIBLE, restored in finally, inside onPreDraw so the screen
-// never shows it missing) while the root is drawn, so the bitmap
-// holds ONLY background: photo + cards + scroll content. The
-// dirty check also watches this view's own rectangle, because a
-// moving droplet no longer changes any bitmap pixel. Bar tuning
-// for clarity: tintMix 0.20, chain blur 6dp at the default setting,
-// veil 0.08 (TS side).
+// BUILD 6 (12 Nov 2026). The mechanism is proven and UNCHANGED —
+// only the shader and the look change:
+//   - Bar shader: the v3 coherent bend, ported exactly (bend band
+//     24dp, all channels displaced TOGETHER by 56dp * bend along
+//     -normal, 6dp tangent spread, +/-4dp chromatic fringe on top).
+//     The displaced sample is now also the rim band's base colour
+//     (mixed in by `bend`), not only the sheen: in builds 4-5 the
+//     base was the undisplaced sample and the bend only modulated
+//     the sheen, which is why no shift was ever visible.
+//   - Effect chain SWAPPED: material shader FIRST, blur AFTER
+//     (createChainEffect(blur, material): Android docs —
+//     createChainEffect(outer, inner) = outer(inner(source)) — so
+//     the blur is the outer effect and runs after the material).
+//     Blur-then-bend displaced an already-soft image and the bend
+//     vanished; bend-then-blur shifts sharp features and the blur
+//     only softens the shifted result. Blur stays 6dp.
+//   - Tint 0.15, veil 0.05 (TS side). Droplet: magnification 1.35
+//     and a bright lens rim with a faint dark ring just inside it,
+//     so the lens reads as a lens, not a flat pale disc.
+//   - GlassDebugState: a build-6 verification aid. The native
+//     state (capture size, navbar found/hidden, effect drawn, last
+//     hash/rect) is exposed to JS so the DemoScreen can print it
+//     on screen. Remove before final delivery.
 //
 // PERFORMANCE RULES (all deliberate, do not "optimise" them away):
 //   - ONE shared bitmap per root per frame; bar and droplet share
@@ -58,10 +69,10 @@
 //
 // MODES. One class, two shaders, chosen by the `mode` prop:
 //   - "bar": the Anivio-adapted capsule shader (GlassBarShader.kt,
-//     GPL-3.0, attribution kept below): tintMix fixed 0.30, tint
-//     colour by mode, rim sheen, chromatic bend at the rim only.
-//     The chain blur in front of it makes the bar smooth, not a
-//     sharp photo.
+//     GPL-3.0, attribution kept below): tintMix 0.15 (build 6),
+//     tint colour by mode, rim sheen, and the v3 COHERENT bend at
+//     the rim (all channels together, 56dp * bend, band 24dp).
+//     The chain blurs AFTER the material, so the bend survives.
 //   - "droplet": Haziq's lens. Original shader: no tint, no blur,
 //     completely clear. Magnification is zero at the exact centre
 //     and grows toward the rim, so the middle icon reads clean.
@@ -89,6 +100,32 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import expo.modules.kotlin.AppContext
 
+/**
+ * Build-6 verification aid. The last native glass state, written by
+ * GlassView on every capture/draw and read by the module's
+ * getGlassDebug async function so the DemoScreen can print it on
+ * screen. This is what settles, from the outside, whether the
+ * navbar root was really found and hidden during capture and
+ * whether the effect really drew. REMOVE before final delivery.
+ */
+internal object GlassDebugState {
+  @Volatile var bitmapSize = "—"
+  @Volatile var navbarFound = false
+  @Volatile var navbarHidden = false
+  @Volatile var effectDrawn = false
+  @Volatile var lastHash = "—"
+  @Volatile var lastRect = "—"
+  @Volatile var lastMode = "—"
+
+  fun snapshot(): String {
+    val nav = if (navbarFound) "Y" else "N"
+    val hid = if (navbarHidden) "Y" else "N"
+    val drw = if (effectDrawn) "Y" else "N"
+    return "cap $bitmapSize | nav $nav hid $hid | drawn $drw ($lastMode)\n" +
+      "hash $lastHash | rect $lastRect"
+  }
+}
+
 @SuppressLint("ViewConstructor")
 class GlassView(context: Context, appContext: AppContext) : View(context),
   ViewTreeObserver.OnPreDrawListener {
@@ -107,11 +144,12 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 
     const val DEFAULT_MODE = "bar"
     const val DEFAULT_GLOW_STRENGTH = 1.0f
-    // Build 5: tint 0.20, not 0.30 — the bar must read CLEAR, not frosted.
-    const val DEFAULT_TINT_MIX = 0.20f
+    // Build 6: tint 0.15, not 0.20 — the bar must read CLEAR, not frosted.
+    const val DEFAULT_TINT_MIX = 0.15f
     // Dark tint (28,28,30), the iOS 27 default fill colour.
     val DEFAULT_TINT_COLOR = floatArrayOf(28f / 255f, 28f / 255f, 30f / 255f)
-    const val DEFAULT_MAGNIFICATION = 1.25f
+    // Build 6: magnification 1.35, not 1.25 — the lens must read.
+    const val DEFAULT_MAGNIFICATION = 1.35f
     /** Blur radius in dp at the default Blur setting (50/100). Build 5: 6dp, not 10dp. */
     const val DEFAULT_BLUR_RADIUS_DP = 6f
   }
@@ -287,6 +325,20 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
       }
     }
     val hash = backdropHash()
+    // Build 6 debug: publish the native state so the on-screen
+    // readout can show it. navbarHidden is true only when a root
+    // was actually found AND set INVISIBLE for this capture; if
+    // findNavbarRoot ever fails, this reads nav N hid N and the
+    // Appetize check settles it instead of guessing.
+    val bmpNow = shared?.bitmap
+    GlassDebugState.bitmapSize =
+      if (bmpNow != null) "${bmpNow.width}x${bmpNow.height}" else "—"
+    GlassDebugState.navbarFound = navbarRoot != null
+    GlassDebugState.navbarHidden = navbarRoot != null
+    GlassDebugState.lastHash = "%08x".format(hash)
+    GlassDebugState.lastRect =
+      "${curRect.left},${curRect.top},${curRect.right},${curRect.bottom}"
+    GlassDebugState.lastMode = mode
     if (!haveGoodCapture || hash != lastHash || rectChanged) {
       lastHash = hash
       haveGoodCapture = true
@@ -411,6 +463,9 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
       node.endRecording()
       node.setRenderEffect(buildEffect(shader, w, h))
       canvas.drawRenderNode(node)
+      // Build 6 debug: the effect really drew at least once.
+      GlassDebugState.effectDrawn = true
+      GlassDebugState.lastMode = mode
       if (!effectDrawnLogged) {
         effectDrawnLogged = true
         Log.d(TAG, "GlassView: EFFECT DRAWN mode=$mode size=${w}x$h")
@@ -450,11 +505,23 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   }
 
   /**
-   * Blur (bar only) -> AGSL material, as one chained RenderEffect
-   * on the node. The material shader's `backdrop` uniform samples
-   * the node's recorded content AFTER the blur, so the bar is
-   * smooth glass, not a sharp photo. The droplet is a clear lens:
-   * material only, no blur.
+   * AGSL material FIRST, blur AFTER — one chained RenderEffect on
+   * the node. Build 6 swaps build 5's order.
+   *
+   * WHY. Android docs (RenderEffect.createChainEffect): "composes
+   * 'inner' with 'outer', such that the results of 'inner' are
+   * treated as the source bitmap passed to 'outer', i.e.
+   * result = outer(inner(source))". So createChainEffect(blur,
+   * material) runs the material shader on the sharp captured
+   * bitmap FIRST and blurs the BENT result after. Build 5 had
+   * createChainEffect(material, blur) = material(blur(source)):
+   * the bend displaced an already-soft image, so no shift was
+   * ever visible and the rim read as a faint line. The bend
+   * displaces sharp features by up to 56dp (see the shader), far
+   * more than the 6dp blur that follows it, so the shift survives
+   * the blur. If the bend still washes out on device, drop the
+   * blur to 4dp — do NOT move it back in front of the material.
+   * The droplet is a clear lens: material only, no blur.
    */
   private fun buildEffect(shader: RuntimeShader, w: Int, h: Int): RenderEffect? {
     val density = resources.displayMetrics.density
@@ -474,7 +541,8 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
       val blurPx = (blurRadiusDp * density).coerceAtLeast(0f)
       if (blurPx <= 0f) return material
       val blur = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP)
-      RenderEffect.createChainEffect(material, blur)
+      // Outer = blur, inner = material: blur(material(source)).
+      RenderEffect.createChainEffect(blur, material)
     } catch (t: Throwable) {
       Log.w(TAG, "RenderEffect failed (${t.javaClass.simpleName}); drawing un-blurred", t)
       null
@@ -484,16 +552,27 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 
 // The bar shader is adapted from GlassBarShader.kt in Anivio
 // (https://github.com/mdtahseen7/Anivio), licensed under GPL-3.0.
-// The only changes from Anivio's original are:
-// - the `tintMix` uniform (build 5: 0.20, the clear-glass fill)
+// The changes from Anivio's original are:
+// - the `tintMix` uniform (build 6: 0.15, the clear-glass fill)
 //   replacing the hardcoded 0.55 in the surface mix;
 // - the `tintColor` uniform, so the tint follows the navbar mode
-//   (dark #1C1C1E / white) instead of always being dark.
+//   (dark #1C1C1E / white) instead of always being dark;
+// - the BEND (build 6, ported from the v3 simulation,
+//   ~/workspace/shader-test/test_real_photo_v3.py): Anivio fringed
+//   R/G/B by different amounts (16/62/57dp) and nothing else — a
+//   colour fringe on an already-blurred image, invisible at phone
+//   scale. The v3 bend displaces ALL channels TOGETHER by
+//   56dp * bend along -normal, over a 24dp band, with a 6dp
+//   tangent spread, and the displaced sample is the rim band's
+//   base colour (mixed in by `bend`), not only the sheen. A rock
+//   or a line of text visibly SHIFTS as it crosses the rim. A
+//   small +/-4dp chromatic fringe rides on top of the coherent
+//   shift as a glass cue. The chain now blurs AFTER this shader,
+//   so the shift survives the blur.
 //
 // `backdrop` here is the captured bitmap drawn into the RenderNode:
-// real backdrop pixels, blurred by the chain effect in front of
-// this shader. It is NOT the view's own (empty) drawing — that was
-// the builds 1-3 mistake.
+// real backdrop pixels. It is NOT the view's own (empty) drawing —
+// that was the builds 1-3 mistake.
 private const val BAR_SHADER_SOURCE = """
 uniform shader backdrop;
 uniform float2 resolution;
@@ -504,7 +583,7 @@ uniform float tintMix;
 uniform half3 tintColor;
 
 half3 sampleLight(float2 position, float2 tangent) {
-    float2 spread = tangent * density * 10.0;
+    float2 spread = tangent * density * 6.0;
     return backdrop.eval(position).rgb * 0.5
         + backdrop.eval(position - spread).rgb * 0.25
         + backdrop.eval(position + spread).rgb * 0.25;
@@ -523,16 +602,26 @@ half4 main(float2 position) {
     float2 tangent = float2(-normal.y, normal.x);
     float depth = max(-distanceToEdge, 0.0) / density;
     half3 surface = mix(backdrop.eval(position).rgb, tintColor, tintMix);
-    if (depth >= 16.0 || glowStrength <= 0.0) return half4(surface * coverage, coverage);
+    if (depth >= 24.0 || glowStrength <= 0.0) return half4(surface * coverage, coverage);
     float rim = exp(-0.0565 * depth - 0.0322 * depth * depth);
     float upperLight = 0.18 + 0.82 * pow(max(-normal.y, 0.0), 0.65);
     float bend = pow(rim, 0.18);
-    half3 redLight = sampleLight(position - normal * density * 16.0 * bend, tangent);
-    half3 greenLight = sampleLight(position - normal * density * 62.0 * bend, tangent);
-    half3 blueLight = sampleLight(position - normal * density * 57.0 * bend, tangent);
-    half3 refracted = half3(redLight.r, greenLight.g, blueLight.b);
+    // COHERENT bend (v3): every channel displaced TOGETHER by the
+    // same vector, 56dp * bend along -normal (inward). At the rim
+    // bend is 1, so a feature shifts up to 56dp; at 24dp in, bend
+    // is ~0 and the sample is undisplaced. Small chromatic fringe
+    // on top: red pulled 4dp further in, blue 4dp less.
+    half3 refracted = sampleLight(position - normal * density * 56.0 * bend, tangent);
+    half3 redLight = sampleLight(position - normal * density * (56.0 * bend + 4.0), tangent);
+    half3 blueLight = sampleLight(position - normal * density * (56.0 * bend - 4.0), tangent);
+    refracted = half3(redLight.r, refracted.g, blueLight.b);
     half luminance = dot(refracted, half3(0.2126, 0.7152, 0.0722));
     refracted = clamp(mix(half3(luminance), refracted, 1.25), 0.0, 1.0);
+    // The rim band's base colour IS the bent sample, mixed in by
+    // `bend` — builds 4-5 kept the undisplaced sample as the base
+    // and let the bend only tint the sheen, so nothing ever moved.
+    half3 displacedSurface = mix(refracted, tintColor, tintMix);
+    surface = mix(surface, displacedSurface, bend);
     half3 sheen = half3(0.1735, 0.0529, 0.0184) + refracted * half3(0.0953, 0.3152, 0.3822);
     half3 color = surface + sheen * rim * upperLight * glowStrength;
     float highlight = exp(-pow((depth - 0.35) / 0.42, 2.0));
@@ -548,6 +637,13 @@ half4 main(float2 position) {
 // (the icon under it) without scaling any view. The magnification
 // is zero at the exact centre of the lens and increases toward the
 // rim, so the icon sitting exactly in the middle reads clean.
+//
+// BUILD 6: a thin bright LENS RIM within ~2dp of the capsule edge
+// (white, stronger at the top, fading toward the bottom) plus a
+// very subtle dark ring just inside it (depth ~3dp). Builds 4-5
+// had no rim at all, so over a featureless gradient the lens was
+// just a pale disc with no edge to read as glass. Magnification
+// default is 1.35 (was 1.25).
 //
 // This shader is original work written for this navbar. It is NOT
 // Anivio's shader.
@@ -569,6 +665,8 @@ half4 main(float2 position) {
     float distanceToEdge = distanceToCenter - radius;
     float coverage = 1.0 - smoothstep(-0.5, 0.5, distanceToEdge);
     if (coverage <= 0.0) return half4(0.0);
+    float2 normal = float2(capsule.x * sign(local.x), capsule.y) / max(distanceToCenter, 0.001);
+    float depth = max(-distanceToEdge, 0.0) / density;
 
     // Magnifying lens. The sample point is pulled toward the centre:
     // at the exact centre local is (0,0), so the sample equals the
@@ -579,6 +677,16 @@ half4 main(float2 position) {
     float mag = 1.0 + (magnification - 1.0) * smoothstep(0.0, 1.0, r);
     float2 samplePos = resolution * 0.5 + local / mag;
     half3 color = backdrop.eval(samplePos).rgb;
-    return half4(color * coverage, coverage);
+
+    // Lens rim: a thin bright specular ring right at the edge
+    // (depth 0 -> 2dp), stronger at the top of the lens and fading
+    // toward the bottom, so the circle reads as a LENS with an
+    // edge instead of a flat disc. Just inside it, a faint dark
+    // ring (peaking at ~3dp in) gives the rim something to sit on.
+    float rimBand = 1.0 - smoothstep(0.0, 2.0, depth);
+    float topLight = 0.35 + 0.65 * pow(max(-normal.y, 0.0), 0.65);
+    color += half3(1.0) * rimBand * topLight * 0.55;
+    color -= half3(0.10) * exp(-pow((depth - 3.0) / 1.5, 2.0));
+    return half4(clamp(color, 0.0, 1.0) * coverage, coverage);
 }
 """
