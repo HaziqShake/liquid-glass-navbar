@@ -44,6 +44,19 @@
  * bottom-right read faint while the top-left borrowed the shader's
  * top-weighted highlight. Both fixed in build 7.
  *
+ * BUILD 8 (12 Nov 2026). Two device-check instruments, no look
+ * change by default: (1) EXAGGERATED-BEND DIAGNOSTIC — settings
+ * gain `bendDiagnostic` (default false); when ON the bar GlassView
+ * gets bendScale 3, tripling the shader's coherent displacement
+ * (56dp -> 168dp at the rim), so the device check can see whether
+ * ANY displacement reaches the screen. Default OFF, shipped look
+ * stays at 1.0. (2) HOLD LIFT — the lift SharedValue moved to the
+ * DemoScreen (a prop here) so the on-screen debug readout prints
+ * it as ground truth; HOLD_LIFT -14 -> -20, HOLD_SWELL 0.18 ->
+ * 0.25, so the lift is unmistakable while still reading as
+ * "slightly". Code review found no defect capping lift below 1,
+ * so the readout settles it on device.
+ *
  * EDGE LIGHT: two overlapping pill-outline rects, each stroked 1.5px
  * white, each with its own radialGradient centred on ONE bright
  * corner — the outline's corner point, top-left and bottom-right
@@ -118,10 +131,25 @@ const OUTSET = 24;
 
 /** The droplet's resting size: a 48dp lens, fully inside the bar. */
 const DROPLET_DP = 48;
-/** How far the droplet lifts above the bar while held, in dp. Build 5: -14. */
-const HOLD_LIFT = -14;
-/** How much the droplet swells while held (the lens grows, not the bar). Build 5: 0.18. */
-const HOLD_SWELL = 0.18;
+/** How far the droplet lifts above the bar while held, in dp.
+ *  Build 8: -20 (was -14). Build 7's device check measured the
+ *  mid-hold rise at only ~5dp on the unshrunk bar against -14dp
+ *  expected — but the two measurements from that check (rise
+ *  ~5dp, swell +26%) are mutually inconsistent with ANY single
+ *  lift value (lift ~0.27 predicts +5% swell, lift 1 predicts
+ *  +18%), so at least one of them is a rough eyeball of a soft
+ *  lens edge, not ground truth, and code review finds no defect
+ *  that would cap lift below 1 (pan.onBegin fires on touch down,
+ *  longPress.onStart at 150ms, both set lift -> 1 over 180ms;
+ *  the transform math gives 18.3dp top rise at lift 1). The lift
+ *  value is now printed in the on-screen debug readout (see
+ *  DemoScreen), which settles on device whether lift reaches 1.
+ *  Meanwhile -20dp makes the lift unmistakable while still
+ *  reading as "slightly" — do not balloon the droplet. */
+const HOLD_LIFT = -20;
+/** How much the droplet swells while held (the lens grows, not the bar).
+ *  Build 8: 0.25 (was 0.18), same reasoning as HOLD_LIFT. */
+const HOLD_SWELL = 0.25;
 
 /** Icon size in dp; the label is 16dp tall when shown. */
 const ICON_DP = 26;
@@ -145,6 +173,13 @@ export interface LiquidNavbarProps {
    *  by the below-API-33 expo-blur fallback; the native glass
    *  captures its own backdrop and never touches this. */
   blurTarget: React.RefObject<View | null>;
+  /** 0 = droplet resting over the active tab, 1 = held (lifted over
+   *  the bar). Owned by the DemoScreen (created there) so its 1s
+   *  debug poll can read it — the on-screen readout prints the
+   *  lift value as ground truth for the device check (build 8:
+   *  the build 7 check measured a ~3x under-delivery, and the
+   *  readout settles whether lift actually reaches 1). */
+  lift: SharedValue<number>;
   settings: NavbarSettings;
 }
 
@@ -268,6 +303,7 @@ export function LiquidNavbar({
   onSelect,
   labelFraction,
   blurTarget,
+  lift,
   settings,
 }: LiquidNavbarProps): React.JSX.Element {
   const insets = useSafeAreaInsets();
@@ -293,7 +329,8 @@ export function LiquidNavbar({
   // width below.
   const dropletPos = useSharedValue(selectedIndex);
   // 0 = resting over the active tab, 1 = held (lifted over the bar).
-  const lift = useSharedValue(0);
+  // Owned by the DemoScreen (a prop), so the debug readout can
+  // print the lift value — build 8 ground truth for the hold lift.
 
   // Bar size, driven ONLY by the scroll shrink. Nothing else — no tab
   // switch, no hold — ever changes the bar's size.
@@ -462,6 +499,11 @@ export function LiquidNavbar({
                     style={StyleSheet.absoluteFill}
                     mode="bar"
                     glowStrength={settings.refractionStrength}
+                    // Build 8 DIAGNOSTIC: bendScale 3 only when the
+                    // bendDiagnostic switch is ON, else 1 (shipped
+                    // look). Bar only — the droplet shader has no
+                    // bendScale and is untouched.
+                    bendScale={settings.bendDiagnostic ? 3 : 1}
                     tintMix={TINT_MIX}
                     tintColor={tintColor}
                     blurRadius={blurRadiusDp}

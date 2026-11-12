@@ -56,6 +56,21 @@
 //     top-weighted sheen/highlight (light from above — a glass
 //     cue, kept), the droplet lens rim.
 //
+// BUILD 8 (12 Nov 2026). Exaggerated-bend DIAGNOSTIC. Device
+// evidence (two rigorous Appetize checks of build 7) shows ZERO
+// displacement at the rim while the sim measures 12.5dp — the
+// code is correct as written, the APK contains it, the device
+// still shows nothing, so no more theorising from the sim. The
+// bar shader gains a `bendScale` uniform (default 1.0) that
+// multiplies the coherent displacement (56dp * bend * bendScale),
+// wired to a `bendScale` prop (default 1.0). The JS settings gain
+// `bendDiagnostic` (default false); when ON the bar gets
+// bendScale 3, so the device check can see whether ANY
+// displacement reaches the screen. If 3x shows nothing, the
+// displacement path is dead on device; if 3x shows, 1.0 is below
+// visibility. DIAGNOSTIC ONLY — never the shipped look, default
+// OFF. The droplet shader is untouched (no bendScale there).
+//
 // PERFORMANCE RULES (all deliberate, do not "optimise" them away):
 //   - ONE shared bitmap per root per frame; bar and droplet share
 //     it, never one capture each.
@@ -144,6 +159,12 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 
     const val DEFAULT_MODE = "bar"
     const val DEFAULT_GLOW_STRENGTH = 1.0f
+    // Build 8 DIAGNOSTIC: multiplies the bar shader's coherent
+    // displacement (56dp * bend * bendScale). Default 1.0 = the
+    // shipped look. The JS settings' bendDiagnostic switch sets it
+    // to 3.0 to prove whether ANY displacement reaches the screen.
+    // Never the shipped look by default; see BAR_SHADER_SOURCE.
+    const val DEFAULT_BEND_SCALE = 1.0f
     // Build 7: tint 0.10, not 0.15 — the bar must read CLEAR, not frosted.
     const val DEFAULT_TINT_MIX = 0.10f
     // Dark tint (28,28,30), the iOS 27 default fill colour.
@@ -159,6 +180,10 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 
   private var mode: String = DEFAULT_MODE
   private var glowStrength: Float = DEFAULT_GLOW_STRENGTH
+  // Build 8 DIAGNOSTIC: multiplies the bar shader's coherent
+  // displacement. Default 1.0 (shipped look); 3.0 only when the
+  // bendDiagnostic setting is ON. Droplet mode ignores it.
+  private var bendScale: Float = DEFAULT_BEND_SCALE
   private var tintMix: Float = DEFAULT_TINT_MIX
   private var tintColor: FloatArray = DEFAULT_TINT_COLOR.copyOf()
   private var magnification: Float = DEFAULT_MAGNIFICATION
@@ -217,6 +242,16 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   fun setGlowStrength(value: Float) {
     if (glowStrength == value) return
     glowStrength = value
+    invalidate()
+  }
+
+  // Build 8 DIAGNOSTIC. Multiplies the bar shader's coherent
+  // displacement (56dp * bend * bendScale). Default 1.0 = shipped
+  // look; 3.0 only from the bendDiagnostic setting, to prove on
+  // device whether ANY displacement reaches the screen.
+  fun setBendScale(value: Float) {
+    if (bendScale == value) return
+    bendScale = value
     invalidate()
   }
 
@@ -535,6 +570,11 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
       shader.setFloatUniform("magnification", magnification)
     } else {
       shader.setFloatUniform("glowStrength", glowStrength)
+      // Build 8 DIAGNOSTIC: multiplies the coherent displacement.
+      // Default 1.0 (shipped look); 3.0 only when bendDiagnostic
+      // is ON, so the device check can see whether ANY bend
+      // reaches the screen at all.
+      shader.setFloatUniform("bendScale", bendScale)
       shader.setFloatUniform("tintMix", tintMix)
       shader.setFloatUniform("tintColor", tintColor[0], tintColor[1], tintColor[2])
     }
@@ -565,9 +605,11 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 //   R/G/B by different amounts (16/62/57dp) and nothing else — a
 //   colour fringe on an already-blurred image, invisible at phone
 //   scale. The v3 bend displaces ALL channels TOGETHER by
-//   56dp * bend along -normal, over a 24dp band, with a 6dp
-//   tangent spread, and the displaced sample is the rim band's
-//   base colour (mixed in by `bend`), not only the sheen. A rock
+//   56dp * bend * bendScale along -normal, over a 24dp band, with
+//   a 6dp tangent spread, and the displaced sample is the rim
+//   band's base colour (mixed in by `bend`), not only the sheen.
+//   `bendScale` is the build 8 DIAGNOSTIC multiplier (default 1.0;
+//   3.0 only when the bendDiagnostic setting is ON). A rock
 //   or a line of text visibly SHIFTS as it crosses the rim. A
 //   small +/-4dp chromatic fringe rides on top of the coherent
 //   shift as a glass cue. The chain now blurs AFTER this shader,
@@ -582,6 +624,13 @@ uniform float2 resolution;
 uniform float density;
 uniform float outset;
 uniform float glowStrength;
+// BUILD 8 DIAGNOSTIC: multiplies the coherent displacement
+// (56dp * bend * bendScale). Default 1.0 = the shipped look.
+// 3.0 only when the bendDiagnostic setting is ON, to prove on
+// device whether ANY displacement reaches the screen. If 3x
+// shows nothing, the displacement path is dead on device; if 3x
+// shows, 1.0 is below visibility. Never the shipped look.
+uniform float bendScale;
 uniform float tintMix;
 uniform half3 tintColor;
 
@@ -610,13 +659,17 @@ half4 main(float2 position) {
     float upperLight = 0.18 + 0.82 * pow(max(-normal.y, 0.0), 0.65);
     float bend = pow(rim, 0.18);
     // COHERENT bend (v3): every channel displaced TOGETHER by the
-    // same vector, 56dp * bend along -normal (inward). At the rim
-    // bend is 1, so a feature shifts up to 56dp; at 24dp in, bend
+    // same vector, 56dp * bend * bendScale along -normal (inward).
+    // At the rim bend is 1, so a feature shifts up to 56dp at
+    // bendScale 1 (168dp at the 3x diagnostic); at 24dp in, bend
     // is ~0 and the sample is undisplaced. Small chromatic fringe
-    // on top: red pulled 4dp further in, blue 4dp less.
-    half3 refracted = sampleLight(position - normal * density * 56.0 * bend, tangent);
-    half3 redLight = sampleLight(position - normal * density * (56.0 * bend + 4.0), tangent);
-    half3 blueLight = sampleLight(position - normal * density * (56.0 * bend - 4.0), tangent);
+    // on top: red pulled 4dp further in, blue 4dp less. The 4dp
+    // fringe is NOT scaled — it is a glass cue, not the
+    // displacement under test.
+    float bendDp = 56.0 * bend * bendScale;
+    half3 refracted = sampleLight(position - normal * density * bendDp, tangent);
+    half3 redLight = sampleLight(position - normal * density * (bendDp + 4.0), tangent);
+    half3 blueLight = sampleLight(position - normal * density * (bendDp - 4.0), tangent);
     refracted = half3(redLight.r, refracted.g, blueLight.b);
     half luminance = dot(refracted, half3(0.2126, 0.7152, 0.0722));
     refracted = clamp(mix(half3(luminance), refracted, 1.25), 0.0, 1.0);

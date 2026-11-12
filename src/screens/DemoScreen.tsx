@@ -73,14 +73,22 @@ export function DemoScreen(): React.JSX.Element {
   // reads nav N hid N on device, findNavbarRoot failed and the
   // capture still contains the navbar (build 4 behaviour).
   const [debugText, setDebugText] = useState('glass: …');
+  // BUILD 8 verification aid: the hold-lift value, owned here so
+  // the 1s poll below can read it (the navbar only animates it).
+  // Printed as a third debug line, e.g. "lift 1.00" mid-hold.
+  // Build 7's device check measured a ~3x under-delivery of the
+  // hold lift (rise ~5dp vs -14dp expected); this settles on
+  // device whether lift actually reaches 1. Remove before final
+  // delivery, with the rest of the readout.
+  const lift = useSharedValue(0);
   useEffect(() => {
     let alive = true;
     const tick = async (): Promise<void> => {
       try {
         const s = await getGlassDebug();
-        if (alive) setDebugText(s);
+        if (alive) setDebugText(`${s}\nlift ${lift.value.toFixed(2)}`);
       } catch {
-        if (alive) setDebugText('glass: unavailable');
+        if (alive) setDebugText(`glass: unavailable\nlift ${lift.value.toFixed(2)}`);
       }
     };
     tick();
@@ -89,7 +97,7 @@ export function DemoScreen(): React.JSX.Element {
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [lift]);
 
   const blurTargetRef = useRef<View>(null);
   const labelFraction = useSharedValue(1);
@@ -178,6 +186,7 @@ export function DemoScreen(): React.JSX.Element {
         onSelect={onSelect}
         labelFraction={labelFraction}
         blurTarget={blurTargetRef}
+        lift={lift}
         settings={settings}
       />
 

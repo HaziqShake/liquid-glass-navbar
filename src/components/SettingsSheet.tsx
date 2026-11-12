@@ -12,7 +12,7 @@
  */
 
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, useWindowDimensions, View } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { BACKGROUNDS } from '../data/backgrounds';
 import type { NavbarSettings } from '../settings/settings';
@@ -147,6 +147,20 @@ export function SettingsSheet({
         onChange={(v) => set({ legibilityVeil: v })}
       />
 
+      {/* BUILD 8 DIAGNOSTIC ONLY. Triples the bar shader's coherent
+          rim displacement (bendScale 3) so the device check can see
+          whether ANY displacement reaches the screen. Default OFF
+          — the shipped look is bendScale 1. Not a look setting. */}
+      <View style={styles.switchRow}>
+        <Text style={styles.rowLabel}>Bend x3 (diagnostic only)</Text>
+        <Switch
+          value={settings.bendDiagnostic}
+          onValueChange={(v) => set({ bendDiagnostic: v })}
+          trackColor={{ false: 'rgba(255,255,255,0.3)', true: '#FFFFFF' }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+
       <Text style={styles.sectionLabel}>Mode</Text>
       <View style={styles.chips}>
         {(['dark', 'light'] as const).map((mode) => {
@@ -231,6 +245,12 @@ const styles = StyleSheet.create({
   slider: {
     width: '100%',
     height: 32,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
   },
   sectionLabel: {
     fontFamily: 'Inter-Medium',

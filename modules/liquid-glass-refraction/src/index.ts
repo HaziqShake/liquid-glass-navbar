@@ -56,6 +56,13 @@ export type GlassViewProps = {
   mode?: 'bar' | 'droplet';
   /** Strength of the bar's rim sheen / highlight. Default 1.0. */
   glowStrength?: number;
+  /** BUILD 8 DIAGNOSTIC. Multiplies the bar shader's coherent
+   *  displacement (56dp * bend * bendScale). Default 1.0 = the
+   *  shipped look. Set to 3.0 only when the bendDiagnostic setting
+   *  is ON, to prove on device whether ANY displacement reaches
+   *  the screen. Never the shipped look by default. The droplet
+   *  mode ignores it. */
+  bendScale?: number;
   /** Mix of the tint colour into the sampled backdrop. Build 6: 0.15
    *  (clear glass). Not a user setting. */
   tintMix?: number;

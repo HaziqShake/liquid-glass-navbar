@@ -44,6 +44,13 @@ export interface NavbarSettings {
   legibilityVeil: number;
   /** Bar height in dp when labels are shown. Fixed at 64. */
   barHeight: number;
+  /** BUILD 8 DIAGNOSTIC, default false. When ON, the bar glass
+   *  gets bendScale 3 (three times the coherent rim displacement)
+   *  so the device check can see whether ANY displacement reaches
+   *  the screen at all. When OFF the bar renders at bendScale 1,
+   *  the shipped look. This is a diagnostic switch only, never a
+   *  look setting. */
+  bendDiagnostic: boolean;
   /** Bar width as a fraction of the screen width when labels are shown. */
   barWidthPct: number;
   /** Width the bar shrinks to when labels collapse, as a fraction of
@@ -64,4 +71,5 @@ export const DEFAULT_SETTINGS: NavbarSettings = {
   barWidthPct: 0.9,
   shrunkWidthPct: 0.7,
   shrunkHeight: 50,
+  bendDiagnostic: false,
 };

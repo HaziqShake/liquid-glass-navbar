@@ -47,6 +47,16 @@ class LiquidGlassRefractionModule : Module() {
         view.setGlowStrength(glowStrength)
       }
 
+      // BUILD 8 DIAGNOSTIC. Multiplies the bar shader's coherent
+      // displacement (56dp * bend * bendScale). Default 1.0 = the
+      // shipped look. The JS settings' bendDiagnostic switch sets
+      // it to 3.0, so the device check can see whether ANY
+      // displacement reaches the screen. Never the shipped look
+      // by default. Droplet mode ignores it.
+      Prop("bendScale", GlassView.DEFAULT_BEND_SCALE) { view: GlassView, bendScale: Float ->
+        view.setBendScale(bendScale)
+      }
+
       Prop("tintMix", GlassView.DEFAULT_TINT_MIX) { view: GlassView, tintMix: Float ->
         view.setTintMix(tintMix)
       }
