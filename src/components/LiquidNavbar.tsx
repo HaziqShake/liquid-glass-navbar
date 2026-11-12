@@ -17,10 +17,10 @@
  *
  * THE GLASS. A floating pill tab bar. The bar is real glass now:
  * the captured backdrop, blurred in the RenderEffect chain, then
- * bent at the rim by the capsule shader (tint fixed at 0.30, the
- * iOS 27 default). No expo-blur in the bar path anymore — the chain
- * does blur + refraction in one GPU pass, not two. Below API 33
- * the bar falls back to a plain expo-blur pill, never a crash.
+ * bent at the rim by the capsule shader (tint fixed at 0.20, build 5).
+ * No expo-blur in the bar path anymore — the chain does blur +
+ * refraction in one GPU pass, not two. Below API 33 the bar falls
+ * back to a plain expo-blur pill, never a crash.
  *
  * THE DROPLET (Haziq's term): a completely transparent, refractive
  * lens, 48dp, resting INSIDE the bar over the active tab. No fill,
@@ -28,12 +28,28 @@
  * droplet magnifies the icons WITHOUT scaling the icon views — the
  * lens does the magnifying, with displacement zero at the exact
  * centre and growing toward the rim, so the middle icon reads
- * clean. When held, the droplet renders OVER the navbar (an
- * unclipped sibling overlay above the bar silhouette) and swells
- * slightly — the lens grows, the bar and the icons never do.
+ * clean. When held, the droplet lifts above the bar silhouette
+ * (the bar is overflow visible, so the lift is not clipped) and
+ * swells slightly — the lens grows, the bar and the icons never do.
  *
- * EDGE LIGHT: two overlapping pill-outline rects, each stroked 1px
- * white, each with its own radialGradient centred on ONE bright
+ * BUILD 5 (12 Nov 2026). Build 4's capture drew the whole root, so
+ * the bitmap held the navbar itself (veil, white icons, edge light,
+ * labels) and the bar came out a dark frosted pill, the droplet a
+ * pale disc. The native side now hides the navbar root while it
+ * captures, so the bitmap is background-only. The droplet therefore
+ * lives BELOW the icon row in z-order now — inside the bar, above
+ * the glass + veil, below the icons — so the real icon stays razor
+ * sharp on top of the lens and the lens bends only the background
+ * behind it, clearer than the bar (the Instagram/App Store
+ * reference: the droplet is clearer than the navbar). The icon
+ * itself is NOT magnified: it is crisp on top, the background
+ * magnifies through the lens. If Haziq asks for the icon itself
+ * to magnify, that is a follow-up needing an icons-only capture
+ * layer, not this build. Bar tuning for clarity: tintMix 0.20,
+ * chain blur 6dp at the default setting, veil 0.08.
+ *
+ * EDGE LIGHT: two overlapping pill-outline rects, each stroked 1.5px
+ * white (build 5: was 1px), each with its own radialGradient centred on ONE bright
  * corner — top-left (cx=0, cy=0) and bottom-right (cx=1, cy=1),
  * r about 0.32, stops 0% alpha 1, 25% alpha 0.5, 100% alpha 0. No
  * halo rect. Brightness is a function of DISTANCE FROM THE CORNER,
@@ -95,18 +111,19 @@ import type { NavbarSettings } from '../settings/settings';
 const HAS_REFRACTION =
   Platform.OS === 'android' && (Platform.Version as number) >= 33;
 
-/** Fixed bar tint mix, the iOS 27 default. Never a user setting. */
-const TINT_MIX = 0.3;
+/** Fixed bar tint mix. Build 5: 0.20 — the bar must read CLEAR with the
+ *  background visible and bending at the rim, not frosted grey. */
+const TINT_MIX = 0.2;
 
 /** The native shader samples 24dp beyond the pill on every side. */
 const OUTSET = 24;
 
 /** The droplet's resting size: a 48dp lens, fully inside the bar. */
 const DROPLET_DP = 48;
-/** How far the droplet lifts above the bar while held, in dp. */
-const HOLD_LIFT = -10;
-/** How much the droplet swells while held (the lens grows, not the bar). */
-const HOLD_SWELL = 0.12;
+/** How far the droplet lifts above the bar while held, in dp. Build 5: -14. */
+const HOLD_LIFT = -14;
+/** How much the droplet swells while held (the lens grows, not the bar). Build 5: 0.18. */
+const HOLD_SWELL = 0.18;
 
 /** Icon size in dp; the label is 16dp tall when shown. */
 const ICON_DP = 26;
@@ -136,11 +153,14 @@ export interface LiquidNavbarProps {
 /**
  * The edge light.
  *
- * TWO overlapping pill-outline rects, each stroked 1px white, each
+ * TWO overlapping pill-outline rects, each stroked 1.5px white, each
  * with its own radialGradient centred on ONE bright corner:
  * top-left (cx=0, cy=0) and bottom-right (cx=1, cy=1),
- * gradientUnits="objectBoundingBox", r=0.32, stops 0% alpha 1, 25%
- * alpha 0.5, 100% alpha 0. No halo rect.
+ * gradientUnits="objectBoundingBox", r=0.32, stops 0% alpha 1, 15%
+ * alpha 0.6, 100% alpha 0. No halo rect. Build 5: the stroke went
+ * 1px -> 1.5px and the 25% stop became a 15% stop at alpha 0.6 —
+ * a brighter core with the same fast falloff, so the light actually
+ * reads on a dark pill instead of a faint top line.
  *
  * THE MATH. Brightness is a function of DISTANCE FROM THE CORNER,
  * nothing else. The gradient is an ellipse in screen space with
@@ -165,7 +185,7 @@ function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
           gradientUnits="objectBoundingBox"
         >
           <Stop offset="0%" stopColor="#FFFFFF" stopOpacity={1} />
-          <Stop offset="25%" stopColor="#FFFFFF" stopOpacity={0.5} />
+          <Stop offset="15%" stopColor="#FFFFFF" stopOpacity={0.6} />
           <Stop offset="100%" stopColor="#FFFFFF" stopOpacity={0} />
         </RadialGradient>
         <RadialGradient
@@ -176,7 +196,7 @@ function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
           gradientUnits="objectBoundingBox"
         >
           <Stop offset="0%" stopColor="#FFFFFF" stopOpacity={1} />
-          <Stop offset="25%" stopColor="#FFFFFF" stopOpacity={0.5} />
+          <Stop offset="15%" stopColor="#FFFFFF" stopOpacity={0.6} />
           <Stop offset="100%" stopColor="#FFFFFF" stopOpacity={0} />
         </RadialGradient>
       </Defs>
@@ -191,7 +211,7 @@ function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
         rx={49}
         fill="none"
         stroke="url(#liquid-edge-tl)"
-        strokeWidth={1}
+        strokeWidth={1.5}
         vectorEffect="non-scaling-stroke"
         opacity={intensity}
       />
@@ -203,7 +223,7 @@ function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
         rx={49}
         fill="none"
         stroke="url(#liquid-edge-br)"
-        strokeWidth={1}
+        strokeWidth={1.5}
         vectorEffect="non-scaling-stroke"
         opacity={intensity}
       />
@@ -321,9 +341,11 @@ export function LiquidNavbar({
       lift.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
     });
 
-  // Tap wins outright; a hold and a drag can be active together (hold
-  // for 150ms, then drag, and the droplet stays lifted while it moves).
-  const gesture = Gesture.Exclusive(tap, Gesture.Simultaneous(longPress, pan));
+  // Build 5: hold/drag have priority over tap. Build 4 let tap win
+  // outright, so a hold could lose to the tap and the lift never
+  // showed; a hold and a drag can be active together (hold for
+  // 150ms, then drag, and the droplet stays lifted while it moves).
+  const gesture = Gesture.Exclusive(Gesture.Simultaneous(longPress, pan), tap);
 
   const barWrapStyle = useAnimatedStyle(() => ({
     width: barWidth.value,
@@ -382,43 +404,72 @@ export function LiquidNavbar({
   const iconInactive = dark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)';
   const veilColor = dark ? '#000000' : '#FFFFFF';
   const fallbackFill = dark ? 'rgba(28,28,30,0.3)' : 'rgba(255,255,255,0.3)';
-  // Blur setting (0-100) maps to the chain blur radius: 50 -> 10dp.
-  const blurRadiusDp = settings.barBlur * 0.2;
+  // Blur setting (0-100) maps to the chain blur radius: build 5,
+  // 50 -> 6dp (was 10dp). A lighter blur keeps the background's
+  // detail so the rim bend stays visible; the slider still works.
+  const blurRadiusDp = settings.barBlur * 0.12;
 
   return (
     <View style={[styles.root, { bottom: insets.bottom + 16 }]}>
       <Animated.View style={[styles.barWrap, barWrapStyle]}>
         <GestureDetector gesture={gesture}>
-          <Animated.View style={[styles.bar, barStyle]}>
-            {HAS_REFRACTION ? (
-              <Animated.View style={[styles.glassFill, barGlassWrapStyle]}>
-                <GlassView
-                  style={StyleSheet.absoluteFill}
-                  mode="bar"
-                  glowStrength={settings.refractionStrength}
-                  tintMix={TINT_MIX}
-                  tintColor={tintColor}
-                  blurRadius={blurRadiusDp}
-                />
+          <Animated.View style={styles.bar}>
+            {/* The glass container carries the pill clip (overflow
+                hidden + animated radius). The bar itself is overflow
+                visible, so the held droplet can lift above its
+                silhouette instead of being clipped by it. */}
+            <Animated.View style={[styles.glassContainer, barStyle]}>
+              {HAS_REFRACTION ? (
+                <Animated.View style={[styles.glassFill, barGlassWrapStyle]}>
+                  <GlassView
+                    style={StyleSheet.absoluteFill}
+                    mode="bar"
+                    glowStrength={settings.refractionStrength}
+                    tintMix={TINT_MIX}
+                    tintColor={tintColor}
+                    blurRadius={blurRadiusDp}
+                  />
+                </Animated.View>
+              ) : (
+                <>
+                  <BlurView
+                    style={StyleSheet.absoluteFill}
+                    intensity={settings.barBlur}
+                    tint={dark ? 'dark' : 'light'}
+                    blurMethod="dimezisBlurViewSdk31Plus"
+                    blurTarget={blurTarget}
+                    blurReductionFactor={1}
+                  />
+                  <View style={[StyleSheet.absoluteFill, { backgroundColor: fallbackFill }]} />
+                </>
+              )}
+              <View
+                style={[styles.veil, { backgroundColor: veilColor, opacity: settings.legibilityVeil }]}
+              />
+              <EdgeLight intensity={settings.edgeLight} />
+            </Animated.View>
+            {/* THE DROPLET, build 5: BELOW the icon row, ABOVE the
+                glass. It renders before the icon row (and the icon
+                row carries the higher zIndex), so the real icon stays
+                razor sharp on top of the lens while the lens bends
+                only the background behind it — clearer than the bar.
+                It never intercepts touches. On hold it lifts above
+                the bar silhouette: the bar is overflow visible now,
+                so the lift is not clipped. */}
+            <Animated.View style={[styles.dropletOverlay, { zIndex: 1 }]} pointerEvents="none">
+              <Animated.View style={[styles.dropletFrame, dropletFrameStyle]}>
+                {HAS_REFRACTION ? (
+                  <View style={styles.dropletGlass}>
+                    <GlassView
+                      style={StyleSheet.absoluteFill}
+                      mode="droplet"
+                      magnification={settings.dropletMagnification}
+                    />
+                  </View>
+                ) : null}
               </Animated.View>
-            ) : (
-              <>
-                <BlurView
-                  style={StyleSheet.absoluteFill}
-                  intensity={settings.barBlur}
-                  tint={dark ? 'dark' : 'light'}
-                  blurMethod="dimezisBlurViewSdk31Plus"
-                  blurTarget={blurTarget}
-                  blurReductionFactor={1}
-                />
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: fallbackFill }]} />
-              </>
-            )}
-            <View
-              style={[styles.veil, { backgroundColor: veilColor, opacity: settings.legibilityVeil }]}
-            />
-            <EdgeLight intensity={settings.edgeLight} />
-            <View style={styles.iconRow}>
+            </Animated.View>
+            <View style={[styles.iconRow, { zIndex: 2 }]}>
               {tabs.map((tab, index) => {
                 const Icon = tab.icon;
                 const active = index === selectedIndex;
@@ -442,22 +493,6 @@ export function LiquidNavbar({
             </View>
           </Animated.View>
         </GestureDetector>
-        {/* The droplet lives in an unclipped overlay ABOVE the bar, so
-            when held it draws over the navbar silhouette instead of
-            being clipped inside it. It never intercepts touches. */}
-        <Animated.View style={styles.dropletOverlay} pointerEvents="none">
-          <Animated.View style={[styles.dropletFrame, dropletFrameStyle]}>
-            {HAS_REFRACTION ? (
-              <View style={styles.dropletGlass}>
-                <GlassView
-                  style={StyleSheet.absoluteFill}
-                  mode="droplet"
-                  magnification={settings.dropletMagnification}
-                />
-              </View>
-            ) : null}
-          </Animated.View>
-        </Animated.View>
       </Animated.View>
     </View>
   );
@@ -475,6 +510,19 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   bar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    // Overflow VISIBLE (build 5): the pill clip lives on the glass
+    // container now, so the held droplet can lift above the bar.
+    overflow: 'visible',
+  },
+  // The pill clip: overflow hidden + the animated radius. Holds the
+  // bar glass, the veil and the edge light — never the droplet or
+  // the icons, which sit above it.
+  glassContainer: {
     position: 'absolute',
     left: 0,
     right: 0,

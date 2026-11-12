@@ -32,6 +32,19 @@
 //      or the droplet moves, the hash differs and one fresh frame
 //      is captured and painted.
 //
+// BUILD 5 (12 Nov 2026). Build 4's capture drew the WHOLE root, so
+// the bitmap contained the navbar itself: the bar's veil, the white
+// icons, the edge light and the labels — blurred and tinted again
+// by the shader, which is why the bar was a dark frosted pill and
+// the droplet a pale disc. Now onPreDraw hides the navbar root
+// (INVISIBLE, restored in finally, inside onPreDraw so the screen
+// never shows it missing) while the root is drawn, so the bitmap
+// holds ONLY background: photo + cards + scroll content. The
+// dirty check also watches this view's own rectangle, because a
+// moving droplet no longer changes any bitmap pixel. Bar tuning
+// for clarity: tintMix 0.20, chain blur 6dp at the default setting,
+// veil 0.08 (TS side).
+//
 // PERFORMANCE RULES (all deliberate, do not "optimise" them away):
 //   - ONE shared bitmap per root per frame; bar and droplet share
 //     it, never one capture each.
@@ -72,6 +85,7 @@ import android.graphics.Shader
 import android.os.Build
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import expo.modules.kotlin.AppContext
 
@@ -93,12 +107,13 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 
     const val DEFAULT_MODE = "bar"
     const val DEFAULT_GLOW_STRENGTH = 1.0f
-    const val DEFAULT_TINT_MIX = 0.30f
+    // Build 5: tint 0.20, not 0.30 — the bar must read CLEAR, not frosted.
+    const val DEFAULT_TINT_MIX = 0.20f
     // Dark tint (28,28,30), the iOS 27 default fill colour.
     val DEFAULT_TINT_COLOR = floatArrayOf(28f / 255f, 28f / 255f, 30f / 255f)
     const val DEFAULT_MAGNIFICATION = 1.25f
-    /** Blur radius in dp at the default Blur setting (50/100). */
-    const val DEFAULT_BLUR_RADIUS_DP = 10f
+    /** Blur radius in dp at the default Blur setting (50/100). Build 5: 6dp, not 10dp. */
+    const val DEFAULT_BLUR_RADIUS_DP = 6f
   }
 
   private var mode: String = DEFAULT_MODE
@@ -124,6 +139,16 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   private var haveGoodCapture = false
   private var effectDrawnLogged = false
   private var shaderErrorLogged = false
+  // Build 5: the backdrop no longer contains the navbar, so a moving
+  // droplet changes no pixel in the bitmap and the hash alone would
+  // never repaint it. The view's own rectangle is part of the dirty
+  // check: a moved/resized view repaints even on a static backdrop.
+  private val curRect = Rect()
+  private val lastRect = Rect()
+  private var lastRectValid = false
+  private var lastHiddenNavbar: View? = null
+  private var lastHiddenSize = ""
+  private var navbarMissingLogged = false
 
   private val fallbackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
   private val srcRect = Rect()
@@ -207,19 +232,62 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     if (!isShown) return true
     val root = rootView ?: return true
     val cap = shared ?: return true
-    val failure = cap.captureIfNeeded(root, root.drawingTime)
+    // BUILD 5 — HIDE THE WHOLE NAVBAR WHILE CAPTURING. Build 4's
+    // capture drew the entire root, so the bitmap contained the
+    // bar's own veil (dark, drawn ON TOP of the glass), the white
+    // icons, the edge light and the labels — then the bar shader
+    // blurred that dark, icon-filled image and tinted it again.
+    // That is why the bar read as a dark frosted pill with no
+    // visible bend, and why the droplet was a pale disc: the lens
+    // magnified the big white icon, not the background. The navbar
+    // root is set INVISIBLE (never GONE, so no layout runs) for the
+    // duration of the capture only, inside onPreDraw, before the
+    // frame is drawn to the screen, and restored in `finally` —
+    // so the screen never shows it missing and there is no flicker.
+    // GlassView.draw() already skips glass views during a capture;
+    // this hides everything else the navbar draws.
+    val navbarRoot = findNavbarRoot(root)
+    if (navbarRoot != null) {
+      val size = "${navbarRoot.width}x${navbarRoot.height}"
+      if (navbarRoot !== lastHiddenNavbar || size != lastHiddenSize) {
+        lastHiddenNavbar = navbarRoot
+        lastHiddenSize = size
+        Log.d(TAG, "capture: hiding navbar root ${navbarRoot.javaClass.simpleName} $size")
+      }
+    } else if (!navbarMissingLogged) {
+      navbarMissingLogged = true
+      Log.w(TAG, "capture: navbar root NOT FOUND, capture will include the navbar (build 4 behaviour)")
+    }
+    val wasVisible = navbarRoot?.visibility
+    val failure = try {
+      if (navbarRoot != null) navbarRoot.visibility = View.INVISIBLE
+      cap.captureIfNeeded(root, root.drawingTime)
+    } finally {
+      if (navbarRoot != null && wasVisible != null) navbarRoot.visibility = wasVisible
+    }
     if (failure != null) {
       Log.w(TAG, "backdrop capture failed (${failure.javaClass.simpleName}); reusing last frame")
     }
     // Only repaint when the backdrop under THIS view actually
-    // changed. Comparing a cheap sampled hash breaks the old
-    // self-sustaining 60fps capture -> invalidate loop: on a static
-    // screen the hash settles and we stop; when content behind
-    // scrolls or the droplet moves, onPreDraw fires from THAT
+    // changed, or when THIS view moved/resized. Comparing a cheap
+    // sampled hash breaks the old self-sustaining 60fps capture ->
+    // invalidate loop: on a static screen the hash settles and we
+    // stop; when content behind scrolls, onPreDraw fires from THAT
     // invalidation, the hash differs, and one fresh frame is
-    // painted.
+    // painted. The rectangle check is build 5: with the navbar out
+    // of the bitmap, a moving droplet changes no bitmap pixel, so
+    // the hash alone would leave it painting a stale rectangle.
+    var rectChanged = false
+    val bmp = shared?.bitmap
+    if (bmp != null && viewRectInBitmap(bmp, curRect)) {
+      rectChanged = !lastRectValid || curRect != lastRect
+      if (rectChanged) {
+        lastRect.set(curRect)
+        lastRectValid = true
+      }
+    }
     val hash = backdropHash()
-    if (!haveGoodCapture || hash != lastHash) {
+    if (!haveGoodCapture || hash != lastHash || rectChanged) {
       lastHash = hash
       haveGoodCapture = true
       // Schedule the repaint OUTSIDE this draw pass. invalidate()
@@ -229,6 +297,40 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
       postInvalidateOnAnimation()
     }
     return true
+  }
+
+  /**
+   * BUILD 5: find the navbar root — the ancestor of this view that
+   * is a direct child of the DemoScreen root — so the capture can
+   * hide the WHOLE navbar. The screen root is the first ancestor
+   * going up that is (a) at least half the root's size in both
+   * dimensions and (b) has more than one child: every wrapper
+   * above the screen (GestureHandlerRootView, ReactRootView, the
+   * content FrameLayout) is full-screen but single-child, and
+   * every multi-child view below the screen root (the bar itself)
+   * is far smaller than half the screen. The navbar root is the
+   * child of that screen root on this view's ancestor chain.
+   *
+   * NOTE: the literal "climb while parent.parent != rootView" walk
+   * would be WRONG here. rootView is the DecorView, several
+   * single-child wrappers above the screen root, so that walk
+   * would climb to the ReactRootView and hide the whole app.
+   * This size + child-count test finds the screen root instead,
+   * whatever wrappers sit above it.
+   */
+  private fun findNavbarRoot(root: View): View? {
+    var child: View = this
+    var node = parent as? View
+    while (node != null && node != root) {
+      if (node is ViewGroup && node.childCount > 1 &&
+        node.width >= root.width / 2 && node.height >= root.height / 2
+      ) {
+        return child
+      }
+      child = node
+      node = node.parent as? View
+    }
+    return null
   }
 
   /**
@@ -383,7 +485,7 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 // The bar shader is adapted from GlassBarShader.kt in Anivio
 // (https://github.com/mdtahseen7/Anivio), licensed under GPL-3.0.
 // The only changes from Anivio's original are:
-// - the `tintMix` uniform (fixed 0.30, the iOS 27 default fill)
+// - the `tintMix` uniform (build 5: 0.20, the clear-glass fill)
 //   replacing the hardcoded 0.55 in the surface mix;
 // - the `tintColor` uniform, so the tint follows the navbar mode
 //   (dark #1C1C1E / white) instead of always being dark.

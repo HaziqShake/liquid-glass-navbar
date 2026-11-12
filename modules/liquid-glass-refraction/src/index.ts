@@ -56,8 +56,8 @@ export type GlassViewProps = {
   mode?: 'bar' | 'droplet';
   /** Strength of the bar's rim sheen / highlight. Default 1.0. */
   glowStrength?: number;
-  /** Mix of the tint colour into the sampled backdrop. Fixed 0.30
-   *  (iOS 27 default fill). Not a user setting. */
+  /** Mix of the tint colour into the sampled backdrop. Build 5: 0.20
+   *  (clear glass). Not a user setting. */
   tintMix?: number;
   /** Tint colour the bar shader mixes in: dark [28/255, 28/255,
    *  30/255] or white [1, 1, 1]. Follows the navbar mode. */
