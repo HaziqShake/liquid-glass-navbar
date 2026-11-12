@@ -53,6 +53,12 @@ jobs:
       - name: Build release APK (x86_64)
         run: cd android && ./gradlew assembleRelease --no-daemon -x lint
 
+      - name: Upload x86_64 APK (for Appetize, even if the emulator fails)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-x86_64
+          path: android/app/build/outputs/apk/release/app-release.apk
+
       - name: Run emulator and screenshot the app
         uses: reactivecircus/android-emulator-runner@v2
         with:
