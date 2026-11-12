@@ -1,82 +1,81 @@
 // SPDX-License-Identifier: GPL-3.0
 //
-// TypeScript wrapper for the native hardware refraction view.
+// TypeScript wrapper for the native hardware liquid-glass view.
 // Android only: on any other platform this renders nothing (the
 // native view manager does not exist there, so guard usage with
-// Platform.OS === 'android').
+// Platform.OS === 'android' and API >= 33).
 //
-// The native view applies an AGSL RuntimeShader via RenderEffect
-// (API 33+) that bends the live backdrop at the bar's edges with
-// chromatic dispersion. The shader is adapted from GlassBarShader.kt
-// in Anivio (https://github.com/mdtahseen7/Anivio), GPL-3.0; the only
-// changes are the `tintMix` uniform (fixed 0.30, the iOS 27 default
-// fill) replacing Anivio's hardcoded 0.55 surface tint, and the
-// `tintColor` uniform so the tint follows the navbar mode (dark
-// #1C1C1E / white) instead of always being dark.
+// HOW IT WORKS (build 4, rewritten from scratch 12 Nov 2026).
+// Builds 1-3 put a RenderEffect on an EMPTY native view and expected
+// its AGSL shader to sample the backdrop behind the view. Android's
+// RenderEffect.createRuntimeShaderEffect binds the shader's uniform
+// to the contents of the RenderNode the effect sits on — the view's
+// OWN drawing, never the pixels behind it — so the shader input was
+// transparent and no refraction could ever appear, at any size.
+// GlassView fixes the mechanism instead of the wiring:
+//   1. onPreDraw it captures the root view ONCE per frame into ONE
+//      shared half-resolution bitmap (SharedBackdrop), skipping
+//      every glass view so there is no feedback loop;
+//   2. in onDraw it records a hardware RenderNode that draws the
+//      captured bitmap cropped to this view's rectangle, sets a
+//      RenderEffect on THAT node (blur chain + AGSL material for the
+//      bar, AGSL material alone for the droplet), and draws the
+//      node. The shader's `backdrop` uniform is the node's recorded
+//      content — real backdrop pixels — so the bend is real.
+//   3. A cheap sampled hash of this view's rectangle in the bitmap
+//      skips recapture and re-invalidation entirely when the backdrop
+//      under the view did not change, so a static screen costs zero
+//      capture work.
 //
-// Integration: render this INSIDE the bar's overflow-hidden container,
-// above the BlurView, laid out 24dp larger than the bar on every side
-// — the host-view wrapper carries the animated size (bar + 48, at
-// left/top -24) and the native view inside it takes
-// StyleSheet.absoluteFill — so the shader's 24dp `outset` region is
-// available and the container clips it to the pill shape. It REPLACES
-// the separate fill View: do not stack a fill on top of it or the tint
-// doubles.
+// PERFORMANCE. One shared bitmap per root per frame (bar + droplet
+// share it, never one capture each); capture at scale 2; capture
+// only in onPreDraw and only while shown; bitmap freed when the
+// last glass view unmounts; shader work only over the pill areas,
+// never fullscreen. No expo-blur in the bar path: the RenderEffect
+// chain does the blur (bar only) and the refraction in one GPU
+// pass. No extra dependencies.
 //
-// WHY THE REFRACTION WAS INVISIBLE (10 Nov, build 319f4b0): the shader
-// is Anivio's proven math and the module is linked, but on device the
-// bar showed only the BlurView and the fill setting did nothing. That
-// is what happens when the shader's uniforms are never set: they
-// default to 0, the capsule SDF collapses, coverage is 0 everywhere
-// and the shader draws transparent. The native view now applies the
-// RenderEffect EAGERLY in init (no size gate — the gate silently
-// never passed in build 1) and re-asserts its uniforms on every
-// size/layout/attach event and prop change, with a Log.d on every
-// attempt. The consumer must NOT give it an explicit width/height:
-// animated layout props applied directly to the custom native view
-// never produced a real layout size on device (build 2), so the
-// uniforms stayed zero and it rendered transparent. Size it through a
-// regular host-view wrapper that carries the animated size, with the
-// native view inside on StyleSheet.absoluteFill.
+// INTEGRATION. Render GlassView INSIDE the bar's overflow-hidden
+// container, above nothing and below the veil/icons, laid out 24dp
+// larger than the pill on every side — the host-view wrapper
+// carries the animated size (pill + 48dp, at left/top -24dp) and
+// the native view inside takes StyleSheet.absoluteFill — so the
+// shader's 24dp `outset` region is available and the container
+// clips it to the pill shape. The bar shader is adapted from
+// GlassBarShader.kt in Anivio (GPL-3.0); the droplet lens shader is
+// original. Fallback below API 33: a plain tinted pill via
+// expo-blur (bar) / nothing (droplet) — never a crash, never a
+// fake white circle.
 
 import { requireNativeViewManager } from 'expo-modules-core';
 import type { ViewStyle } from 'react-native';
 
-export type RefractionViewProps = {
-  /** Strength of the rim sheen / highlight. Default 1.0. */
+export type GlassViewProps = {
+  /** "bar" = capsule glass with tint + rim sheen + blur; "droplet" =
+   *  a completely clear magnifying lens (no tint, no blur). */
+  mode?: 'bar' | 'droplet';
+  /** Strength of the bar's rim sheen / highlight. Default 1.0. */
   glowStrength?: number;
-  /** Mix of the tint colour into the sampled backdrop. Fixed 0.30 (iOS 27 default fill). Not a user setting. */
+  /** Mix of the tint colour into the sampled backdrop. Fixed 0.30
+   *  (iOS 27 default fill). Not a user setting. */
   tintMix?: number;
-  /** Tint colour the shader mixes in: dark [28/255, 28/255, 30/255] or white [1, 1, 1]. Follows the navbar mode. */
+  /** Tint colour the bar shader mixes in: dark [28/255, 28/255,
+   *  30/255] or white [1, 1, 1]. Follows the navbar mode. */
   tintColor?: [number, number, number];
+  /** Droplet lens magnification at the rim. 1.0 is no lens. The
+   *  displacement is zero at the exact centre and grows toward the
+   *  rim, so the middle icon reads clean. Default 1.25. */
+  magnification?: number;
+  /** Bar blur radius in dp for the chain blur effect. The droplet
+   *  never blurs. Default 10dp. */
+  blurRadius?: number;
   style?: ViewStyle;
 };
 
 // Verified against the installed expo-modules-core 57.0.25: SDK 57
 // exposes `requireNativeViewManager(moduleName, viewName)`; there is
 // no `requireNativeView` export in this version.
-export const RefractionView = requireNativeViewManager<RefractionViewProps>(
+export const GlassView = requireNativeViewManager<GlassViewProps>(
   'LiquidGlassRefraction',
-  'RefractionView',
-);
-
-export type DropletRefractionViewProps = {
-  /** Lens magnification at the rim of the droplet. 1.0 is no lens.
-   *  The displacement is zero at the exact centre and grows toward
-   *  the rim, so the middle icon reads clean. Default 1.25. */
-  magnification?: number;
-  style?: ViewStyle;
-};
-
-// Haziq's droplet: a completely transparent magnifying lens. No tint,
-// no blur, no fill — the shader only bends the live backdrop. Render
-// it inside an overflow-hidden pill container, laid out 24dp larger
-// than the droplet frame on every side — the host-view wrapper carries
-// the animated size (frame + 48, at left/top -24) and the native view
-// inside it takes StyleSheet.absoluteFill — so the shader's 24dp
-// `outset` region is available and the container clips it to the pill
-// shape.
-export const DropletRefractionView = requireNativeViewManager<DropletRefractionViewProps>(
-  'LiquidGlassRefraction',
-  'DropletRefractionView',
+  'GlassView',
 );

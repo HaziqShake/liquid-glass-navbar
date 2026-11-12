@@ -1,84 +1,71 @@
 /**
- * Haziq's own liquid glass navbar. Rewritten from scratch, 11 Nov 2026
- * (build 1, commit c52445e, failed on device: the edge light rendered
- * as a V, and there was no refraction and no droplet at all).
+ * Haziq's own liquid glass navbar. Rewritten from scratch, 12 Nov 2026
+ * (build 4).
  *
- * A floating pill tab bar in liquid glass: real blur (expo-blur with a
- * BlurTargetView) plus true refraction from the native AGSL RenderEffect
- * module (hardware path, never a software backdrop capture). The bar
- * tint is fixed at 0.30, the iOS 27 default.
+ * WHAT CHANGED AND WHY. Builds 1-3 put a RenderEffect on an EMPTY
+ * native view and expected its shader to sample the backdrop behind
+ * the view. Android binds that shader uniform to the view's OWN
+ * RenderNode content, never the pixels behind it, so the shader
+ * input was transparent and no refraction could ever appear — the
+ * blur was real (expo-blur, a different path) but the glass never
+ * bent anything, and the droplet rendered as a solid white circle.
+ * This build fixes the MECHANISM: one native GlassView that captures
+ * the root once per frame into one shared half-resolution bitmap
+ * and draws that bitmap through a hardware RenderNode with the AGSL
+ * effect, so the shader bends REAL backdrop pixels. See
+ * modules/liquid-glass-refraction for the native side.
+ *
+ * THE GLASS. A floating pill tab bar. The bar is real glass now:
+ * the captured backdrop, blurred in the RenderEffect chain, then
+ * bent at the rim by the capsule shader (tint fixed at 0.30, the
+ * iOS 27 default). No expo-blur in the bar path anymore — the chain
+ * does blur + refraction in one GPU pass, not two. Below API 33
+ * the bar falls back to a plain expo-blur pill, never a crash.
  *
  * THE DROPLET (Haziq's term): a completely transparent, refractive
- * lens that sits over the active tab. No fill, no tint, no colour, no
- * blur. A lightweight native shader on the droplet magnifies the icons
- * WITHOUT scaling the icon views — the lens does the magnifying. The
- * shader's displacement is zero at the exact centre and grows toward
- * the rim, so the middle icon reads clean. When held, the droplet
- * renders OVER the navbar (an unclipped sibling overlay above the bar
- * silhouette), never inside it.
+ * lens, 48dp, resting INSIDE the bar over the active tab. No fill,
+ * no tint, no colour, no blur. A lightweight native shader on the
+ * droplet magnifies the icons WITHOUT scaling the icon views — the
+ * lens does the magnifying, with displacement zero at the exact
+ * centre and growing toward the rim, so the middle icon reads
+ * clean. When held, the droplet renders OVER the navbar (an
+ * unclipped sibling overlay above the bar silhouette) and swells
+ * slightly — the lens grows, the bar and the icons never do.
  *
- * EDGE LIGHT (rebuilt from scratch after build 1 showed a V shape):
- * two overlapping pill-outline rects, each stroked 1px white, each
- * with its own radialGradient centred on ONE bright corner — top-left
- * (cx=0, cy=0) and bottom-right (cx=1, cy=1), r about 0.32, stops 0%
- * alpha 1, 25% alpha 0.5, 100% alpha 0. No halo rect. Brightness is
- * a function of DISTANCE FROM THE CORNER, nothing else.
+ * EDGE LIGHT: two overlapping pill-outline rects, each stroked 1px
+ * white, each with its own radialGradient centred on ONE bright
+ * corner — top-left (cx=0, cy=0) and bottom-right (cx=1, cy=1),
+ * r about 0.32, stops 0% alpha 1, 25% alpha 0.5, 100% alpha 0. No
+ * halo rect. Brightness is a function of DISTANCE FROM THE CORNER,
+ * nothing else: roughly 25-30% of each adjacent edge is lit and
+ * the rest is transparent, with the falloff fastest right at the
+ * corner. This cannot form a V — a radial gradient's iso-alpha
+ * contours are circles centred on the corner, so each bright region
+ * is an isolated blob hugging its corner and the middle is dark.
  *
- * THE MATH, written out before the code (see EdgeLight below): for a
- * point on the top edge at bbox-x 0.3, the radial gradient is an
- * ellipse in screen space with horizontal radius r * barWidth, so
- * the point sits at normalised distance d = 0.3 / 0.32 = 0.94 of the
- * way to the gradient edge, and the stops give it alpha
- * 0.5 * (1 - (0.94 - 0.25) / 0.75) = 0.04 — effectively dark. At
- * x = 0.16 (d = 0.5) the alpha is 0.33, at x = 0.08 (d = 0.25) it is
- * 0.5, at the corner itself it is 1. So roughly 25-30% of each
- * adjacent edge is lit and the rest is transparent, with the falloff
- * fastest right at the corner.
- *
- * This cannot form a V. The old diagonal linear gradient's iso-alpha
- * lines were straight diagonal lines across the whole pill, so the
- * bright region was a diagonal band joining the two bright corners —
- * the V shape seen on device. A radial gradient's iso-alpha contours
- * are circles (ellipses in screen space) centred on the corner, so
- * each bright region is an isolated blob hugging its corner. Along
- * the diagonal between the two corners the distance from BOTH
- * corners is large (at the centre, ~0.7 of the diagonal from each),
- * so the middle is transparent: there is no path of high alpha
- * joining the corners, and no straight diagonal bright band.
- *
- * REFRACTION (rebuilt after build 1 showed none): the native views
- * now apply their RenderEffect EAGERLY in init, with no size gate —
- * the size gate is what silently never passed on device. Uniforms
- * are re-asserted on every size/layout/attach event and prop change,
- * and every attempt is logged (tags RefractionView and
- * DropletRefractionView), so a device Logcat proves the effect
- * applied.
- *
- * WIRING (rebuilt after build 2 showed none): the native views NEVER
- * receive animated layout props. Animated width/height applied
- * directly to a custom native view never produced a real layout size
- * on device, so the uniforms stayed zero and both views rendered
- * transparent. Each native view now lives inside a regular host
- * Animated.View wrapper that carries the animated size (bar/droplet
- * + 48dp, at -24dp left/top) — animated sizes demonstrably work on
- * host views, the bar itself resizes on scroll — and the native view
- * inside uses StyleSheet.absoluteFill only, so its size flows from
- * Yoga layout through the wrapper.
- *
- * BAR SIZE: driven ONLY by the scroll shrink (labels collapsing). The
- * shrunk bar never grows when switching tabs, and holding never makes
- * the bar big. There is no hold growth and no press scale on the bar.
+ * BAR SIZE: driven ONLY by the scroll shrink (labels collapsing).
+ * The shrunk bar never grows when switching tabs, and holding never
+ * makes the bar big. There is no hold growth and no press scale on
+ * the bar.
  *
  * MOTION: the interactions feel liquid and reactive through one soft
- * spring of my own (a single withSpring on the droplet's tab position)
- * and short timings for the hold lift. No coupled spring engine, no
- * squash and stretch, no rubber banding.
+ * spring of my own (a single withSpring on the droplet's tab
+ * position) and short timings for the hold lift. No coupled spring
+ * engine, no squash and stretch, no rubber banding.
  *
- * WORKLET SAFETY: no worklet is ever called synchronously from the JS
- * thread. Gesture callbacks call worklets worklet-to-worklet on the UI
- * thread; selectTab is called from JS only via runOnUI; the selection
- * callback reaches JS only via runOnJS. The scroll handler lives on an
- * Animated.ScrollView in the demo screen, never on a plain ScrollView.
+ * PERFORMANCE. The glass costs one half-resolution root capture per
+ * frame, shared by bar + droplet, and only while the backdrop under
+ * a view actually changes — a static screen costs zero capture
+ * work (the native side hashes its rectangle and skips). The shader
+ * runs only over the pill areas, never fullscreen. Two glass views,
+ * one bitmap, one GPU pass each.
+ *
+ * WORKLET SAFETY: no worklet is ever called synchronously from the
+ * JS thread. Gesture callbacks call worklets worklet-to-worklet on
+ * the UI thread; selectTab is called from JS only via runOnUI; the
+ * selection callback reaches JS only via runOnJS. The scroll handler
+ * lives on an Animated.ScrollView in the demo screen, never on a
+ * plain ScrollView.
  */
 
 import React, { useCallback, useEffect } from 'react';
@@ -98,24 +85,32 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { BlurView } from 'expo-blur';
 import { Defs, RadialGradient, Rect, Stop, Svg } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DropletRefractionView, RefractionView } from 'liquid-glass-refraction';
+import { GlassView } from 'liquid-glass-refraction';
 import type { NavbarSettings } from '../settings/settings';
 
-/** Native refraction needs API 33+ (RuntimeShader). Below that the bar
- *  falls back to a plain tint fill and the droplet is not rendered. */
+/** Native glass needs API 33+ (RuntimeShader). Below that the bar
+ *  falls back to a plain expo-blur pill and the droplet is not
+ *  rendered at all — a clear lens cannot be faked with a tint, and
+ *  a fake would be build 3's solid white circle again. */
 const HAS_REFRACTION =
   Platform.OS === 'android' && (Platform.Version as number) >= 33;
 
 /** Fixed bar tint mix, the iOS 27 default. Never a user setting. */
 const TINT_MIX = 0.3;
 
-/** The native shader samples 24dp beyond the frame on every side. */
+/** The native shader samples 24dp beyond the pill on every side. */
 const OUTSET = 24;
 
+/** The droplet's resting size: a 48dp lens, fully inside the bar. */
+const DROPLET_DP = 48;
 /** How far the droplet lifts above the bar while held, in dp. */
 const HOLD_LIFT = -10;
 /** How much the droplet swells while held (the lens grows, not the bar). */
 const HOLD_SWELL = 0.12;
+
+/** Icon size in dp; the label is 16dp tall when shown. */
+const ICON_DP = 26;
+const LABEL_DP = 16;
 
 export interface LiquidTabItem {
   key: string;
@@ -131,13 +126,15 @@ export interface LiquidNavbarProps {
    *  screen's scroll handler. This is the ONLY thing that sizes the
    *  bar. */
   labelFraction: SharedValue<number>;
-  /** Ref of the BlurTargetView wrapping the demo content. */
+  /** Ref of the BlurTargetView wrapping the demo content. Only used
+   *  by the below-API-33 expo-blur fallback; the native glass
+   *  captures its own backdrop and never touches this. */
   blurTarget: React.RefObject<View | null>;
   settings: NavbarSettings;
 }
 
 /**
- * The edge light, rebuilt from scratch after build 1 rendered a V.
+ * The edge light.
  *
  * TWO overlapping pill-outline rects, each stroked 1px white, each
  * with its own radialGradient centred on ONE bright corner:
@@ -151,22 +148,10 @@ export interface LiquidNavbarProps {
  * bbox-x 0.3 sits at normalised distance d = 0.3 / 0.32 = 0.94 of
  * the way to the gradient edge, and the stops give it alpha
  * 0.5 * (1 - (0.94 - 0.25) / 0.75) = 0.04: effectively dark. At
- * x = 0.16 (d = 0.5) alpha is 0.33, at x = 0.08 (d = 0.25) alpha
- * is 0.5, at the corner itself alpha is 1. Roughly 25-30% of each
+ * x = 0.16 (d = 0.5) alpha is 0.33, at x = 0.08 (d = 0.25) it is
+ * 0.5, at the corner itself it is 1. Roughly 25-30% of each
  * adjacent edge is lit, the rest transparent, falloff fastest right
  * at the corner.
- *
- * WHY THIS CANNOT FORM A V. The old diagonal linear gradient's
- * iso-alpha lines were straight diagonal lines across the whole
- * pill: the bright region was a diagonal band joining the two bright
- * corners, which is the V seen on device. A radial gradient's
- * iso-alpha contours are circles (ellipses in screen space) centred
- * on the corner, so each bright region is an isolated blob hugging
- * its corner. Along the diagonal between the two corners the
- * distance from BOTH corners is large (at the centre, ~0.7 of the
- * diagonal from each), so the middle is transparent: no path of high
- * alpha joins the corners, and there is no straight diagonal bright
- * band.
  */
 function EdgeLight({ intensity }: { intensity: number }): React.JSX.Element {
   return (
@@ -349,56 +334,43 @@ export function LiquidNavbar({
   }));
   // The bar glass WRAPPER (a regular host view) carries the animated
   // size — bar + 48dp, so its size can never be zero. The native
-  // RefractionView inside it takes StyleSheet.absoluteFill only and
-  // NEVER receives animated layout props: animated width/height
-  // applied directly to the custom native view never produced a real
-  // layout size on device (build 2), so its uniforms stayed zero and
-  // it rendered transparent. The native view applies its RenderEffect
-  // eagerly in init and re-asserts its uniforms on every size/layout/
-  // attach event, with a Log.d on every attempt.
+  // GlassView inside it takes StyleSheet.absoluteFill only and NEVER
+  // receives animated layout props: animated width/height applied
+  // directly to a custom native view never produced a real layout
+  // size on device (build 2), so the native view is sized by Yoga
+  // layout through the wrapper instead.
   const barGlassWrapStyle = useAnimatedStyle(() => ({
     width: barWidth.value + OUTSET * 2,
     height: barHeight.value + OUTSET * 2,
   }));
 
-  // THE DROPLET, rebuilt with the refraction wiring (11 Nov).
-  // A transparent refractive lens, one tab slot wide and bar tall,
-  // living in an unclipped overlay ABOVE the bar. On hold it lifts
-  // above the bar and swells slightly — the lens grows, the bar and
-  // the icons never do. No BlurView anywhere near it: the lens is
-  // the native DropletRefractionView only, which magnifies the icons
-  // through its shader (displacement zero at the exact centre, so
-  // the middle icon reads clean) without scaling any icon view.
+  // THE DROPLET. A 48dp clear lens, centred on the ACTIVE ICON —
+  // not on the whole tab slot, and not as big as the bar. The icon
+  // sits in a column with its label: full bar the icon centre is
+  // 24dp below the top, shrunk (labels collapsed) it is 25dp, so
+  // the lens spans 0-48dp / 1-49dp: fully INSIDE the bar at rest.
+  // On hold it lifts above the bar and swells slightly — the lens
+  // grows, the bar and the icons never do. No BlurView anywhere
+  // near it: the lens is the native GlassView only, which magnifies
+  // the icon through its shader (displacement zero at the exact
+  // centre, so the middle icon reads clean) without scaling any
+  // icon view.
   const dropletFrameStyle = useAnimatedStyle(() => {
     const slot = barWidth.value / tabs.length;
-    const centre = (dropletPos.value + 0.5) * slot;
+    const centreX = (dropletPos.value + 0.5) * slot;
+    const contentH = ICON_DP + LABEL_DP * labelFraction.value;
+    const iconCentreY = (barHeight.value - contentH) / 2 + ICON_DP / 2;
     return {
-      width: slot,
-      height: barHeight.value,
-      borderRadius: barHeight.value / 2,
       transform: [
-        { translateX: centre - slot / 2 },
-        { translateY: HOLD_LIFT * lift.value },
+        { translateX: centreX - DROPLET_DP / 2 },
+        { translateY: iconCentreY - DROPLET_DP / 2 + HOLD_LIFT * lift.value },
         { scale: 1 + HOLD_SWELL * lift.value },
       ],
     };
   });
-  // Same wrapper rule as the bar glass: the droplet glass WRAPPER
-  // (a regular host view) carries the animated size — slot + 48dp,
-  // 24dp larger than its frame on every side — and the native
-  // DropletRefractionView inside it takes StyleSheet.absoluteFill
-  // only, never animated layout props. The native view applies its
-  // effect eagerly in init.
-  const dropletGlassWrapStyle = useAnimatedStyle(() => {
-    const slot = barWidth.value / tabs.length;
-    return {
-      width: slot + OUTSET * 2,
-      height: barHeight.value + OUTSET * 2,
-    };
-  });
   // Labels fade and collapse with the scroll shrink.
   const labelWrapStyle = useAnimatedStyle(() => ({
-    height: 16 * labelFraction.value,
+    height: LABEL_DP * labelFraction.value,
     opacity: labelFraction.value,
   }));
 
@@ -410,31 +382,37 @@ export function LiquidNavbar({
   const iconInactive = dark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)';
   const veilColor = dark ? '#000000' : '#FFFFFF';
   const fallbackFill = dark ? 'rgba(28,28,30,0.3)' : 'rgba(255,255,255,0.3)';
+  // Blur setting (0-100) maps to the chain blur radius: 50 -> 10dp.
+  const blurRadiusDp = settings.barBlur * 0.2;
 
   return (
     <View style={[styles.root, { bottom: insets.bottom + 16 }]}>
       <Animated.View style={[styles.barWrap, barWrapStyle]}>
         <GestureDetector gesture={gesture}>
           <Animated.View style={[styles.bar, barStyle]}>
-            <BlurView
-              style={StyleSheet.absoluteFill}
-              intensity={settings.barBlur}
-              tint={dark ? 'dark' : 'light'}
-              blurMethod="dimezisBlurViewSdk31Plus"
-              blurTarget={blurTarget}
-              blurReductionFactor={1}
-            />
             {HAS_REFRACTION ? (
               <Animated.View style={[styles.glassFill, barGlassWrapStyle]}>
-                <RefractionView
+                <GlassView
                   style={StyleSheet.absoluteFill}
+                  mode="bar"
                   glowStrength={settings.refractionStrength}
                   tintMix={TINT_MIX}
                   tintColor={tintColor}
+                  blurRadius={blurRadiusDp}
                 />
               </Animated.View>
             ) : (
-              <View style={[StyleSheet.absoluteFill, { backgroundColor: fallbackFill }]} />
+              <>
+                <BlurView
+                  style={StyleSheet.absoluteFill}
+                  intensity={settings.barBlur}
+                  tint={dark ? 'dark' : 'light'}
+                  blurMethod="dimezisBlurViewSdk31Plus"
+                  blurTarget={blurTarget}
+                  blurReductionFactor={1}
+                />
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: fallbackFill }]} />
+              </>
             )}
             <View
               style={[styles.veil, { backgroundColor: veilColor, opacity: settings.legibilityVeil }]}
@@ -447,7 +425,7 @@ export function LiquidNavbar({
                 return (
                   <View key={tab.key} style={styles.tabSlot}>
                     <Icon
-                      size={26}
+                      size={ICON_DP}
                       color={active ? iconActive : iconInactive}
                       weight={active ? 'fill' : 'regular'}
                     />
@@ -470,12 +448,13 @@ export function LiquidNavbar({
         <Animated.View style={styles.dropletOverlay} pointerEvents="none">
           <Animated.View style={[styles.dropletFrame, dropletFrameStyle]}>
             {HAS_REFRACTION ? (
-              <Animated.View style={[styles.dropletGlass, dropletGlassWrapStyle]}>
-                <DropletRefractionView
+              <View style={styles.dropletGlass}>
+                <GlassView
                   style={StyleSheet.absoluteFill}
+                  mode="droplet"
                   magnification={settings.dropletMagnification}
                 />
-              </Animated.View>
+              </View>
             ) : null}
           </Animated.View>
         </Animated.View>
@@ -503,16 +482,19 @@ const styles = StyleSheet.create({
     bottom: 0,
     overflow: 'hidden',
   },
-  // Glass wrappers sit 24dp beyond the frame on every side.
+  // Bar glass wrapper sits 24dp beyond the bar frame on every side.
   glassFill: {
     position: 'absolute',
     left: -OUTSET,
     top: -OUTSET,
   },
+  // Droplet glass wrapper: droplet frame (48dp) + 48dp, at -24dp.
   dropletGlass: {
     position: 'absolute',
     left: -OUTSET,
     top: -OUTSET,
+    width: DROPLET_DP + OUTSET * 2,
+    height: DROPLET_DP + OUTSET * 2,
   },
   veil: {
     position: 'absolute',
@@ -556,6 +538,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     top: 0,
+    width: DROPLET_DP,
+    height: DROPLET_DP,
+    borderRadius: DROPLET_DP / 2,
     overflow: 'hidden',
   },
 });

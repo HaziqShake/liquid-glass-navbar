@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0
 //
-// Expo module definition for the hardware refraction view.
-// The AGSL shader used by RefractionView is adapted from
-// GlassBarShader.kt in Anivio (https://github.com/mdtahseen7/Anivio),
-// licensed under GPL-3.0.
+// Expo module definition for the hardware liquid-glass view.
+// The bar AGSL shader is adapted from GlassBarShader.kt in Anivio
+// (https://github.com/mdtahseen7/Anivio), licensed under GPL-3.0;
+// the droplet lens shader is original.
+//
+// One native view class, GlassView, with a `mode` prop ("bar" |
+// "droplet"). It does NOT put a RenderEffect on an empty view —
+// that was the builds 1-3 mistake (the shader input would be
+// transparent). Instead it captures the root once per frame into
+// one shared half-resolution bitmap (SharedBackdrop) and draws that
+// bitmap through a hardware RenderNode with the AGSL effect, so
+// the shader bends real backdrop pixels.
 
 package expo.modules.liquidglassrefraction
 
@@ -14,14 +22,18 @@ class LiquidGlassRefractionModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LiquidGlassRefraction")
 
-    View(RefractionView::class) {
-      Name("RefractionView")
+    View(GlassView::class) {
+      Name("GlassView")
 
-      Prop("glowStrength", RefractionView.DEFAULT_GLOW_STRENGTH) { view: RefractionView, glowStrength: Float ->
+      Prop("mode", GlassView.DEFAULT_MODE) { view: GlassView, mode: String ->
+        view.setMode(mode)
+      }
+
+      Prop("glowStrength", GlassView.DEFAULT_GLOW_STRENGTH) { view: GlassView, glowStrength: Float ->
         view.setGlowStrength(glowStrength)
       }
 
-      Prop("tintMix", RefractionView.DEFAULT_TINT_MIX) { view: RefractionView, tintMix: Float ->
+      Prop("tintMix", GlassView.DEFAULT_TINT_MIX) { view: GlassView, tintMix: Float ->
         view.setTintMix(tintMix)
       }
 
@@ -29,21 +41,23 @@ class LiquidGlassRefractionModule : Module() {
       // Follows the navbar mode: dark (28,28,30) or white (255,255,255).
       // This is WHAT colour the tint is, not how much of it there is;
       // the amount is the fixed tintMix (0.30), never a user setting.
-      Prop("tintColor", RefractionView.DEFAULT_TINT_COLOR.map { it.toDouble() }) { view: RefractionView, tintColor: List<Double> ->
+      Prop("tintColor", GlassView.DEFAULT_TINT_COLOR.map { it.toDouble() }) { view: GlassView, tintColor: List<Double> ->
         if (tintColor.size >= 3) {
           view.setTintColor(tintColor[0].toFloat(), tintColor[1].toFloat(), tintColor[2].toFloat())
         }
       }
-    }
 
-    // Haziq's droplet: a completely transparent magnifying lens. No
-    // tint, no blur, no fill. The magnification is zero at the exact
-    // centre of the lens and grows toward the rim.
-    View(DropletRefractionView::class) {
-      Name("DropletRefractionView")
-
-      Prop("magnification", DropletRefractionView.DEFAULT_MAGNIFICATION) { view: DropletRefractionView, magnification: Float ->
+      // Lens magnification at the rim of the droplet. 1.0 is no lens.
+      // The displacement is zero at the exact centre and grows toward
+      // the rim, so the middle icon reads clean. Default 1.25.
+      Prop("magnification", GlassView.DEFAULT_MAGNIFICATION) { view: GlassView, magnification: Float ->
         view.setMagnification(magnification)
+      }
+
+      // Blur radius in dp for the bar's chain blur effect. The
+      // droplet never blurs. Default 10dp.
+      Prop("blurRadius", GlassView.DEFAULT_BLUR_RADIUS_DP) { view: GlassView, blurRadius: Float ->
+        view.setBlurRadius(blurRadius)
       }
     }
   }
