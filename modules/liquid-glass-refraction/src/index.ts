@@ -20,7 +20,8 @@
 //      captured bitmap cropped to this view's rectangle, sets a
 //      RenderEffect on THAT node (blur FIRST, then the AGSL material
 //      — the library's order — for both modes; the droplet's blur
-//      animates to 0 while it is held), and draws the node. The
+//      stays on while it is held — build 10, it no longer drops to
+//      0), and draws the node. The
 //      shader's `backdrop` uniform is the node's recorded
 //      content — real backdrop pixels — so the bend is real.
 //   3. A cheap sampled hash of this view's rectangle in the bitmap
@@ -57,11 +58,12 @@ export type GlassViewProps = {
   /** "bar" = capsule glass with tint + rim sheen + blur; "droplet" =
    *  the SAME glass over a slot-width capsule. At rest the droplet
    *  has NO magnification (magnification 1.0); only while held
-   *  does it zoom uniformly to `magnification` and drop its blur
-   *  to 0. */
+   *  does it zoom uniformly to `magnification`. BUILD 10: the
+   *  droplet keeps its blur on hold (it no longer drops to 0). */
   mode?: 'bar' | 'droplet';
-  /** Strength of the bar's rim sheen / highlight. Default 1.0.
-   *  Also gates the refraction (0 = no bend, no sheen). */
+  /** Strength of the bar's rim sheen / highlight. BUILD 10
+   *  default 0.5 (was 1.0). Also gates the refraction (0 = no
+   *  bend, no sheen); the bend magnitude is NOT scaled by it. */
   glowStrength?: number;
   /** BUILD 8 DIAGNOSTIC. Multiplies the bar shader's coherent
    *  displacement (iLens * bend * bendScale). Default 1.0 = the
@@ -81,17 +83,19 @@ export type GlassViewProps = {
    *  fisheye, no per-channel split). At rest the droplet renders
    *  at 1.0 (no magnification at all, same glass as the bar);
    *  only while `held` is true does it zoom to M. Default 1.35.
-   *  The bar ignores it (always 1.0). */
+   *  The bar ignores it (always 1.0). BUILD 10: holding keeps
+   *  the droplet's blur — the ONLY change on hold is this zoom. */
   magnification?: number;
   /** BUILD 9: the droplet's hold state. A plain boolean prop; the
-   *  native side eases magnification 1 -> M and the droplet blur
-   *  blurRadius -> 0 over ~200ms itself, so no animated props
-   *  ever touch this native view. The bar ignores it. */
+   *  native side eases magnification 1 -> M over ~200ms itself,
+   *  so no animated props ever touch this native view. BUILD 10:
+   *  the blur does NOT drop to 0 while held anymore. The bar
+   *  ignores it. */
   held?: boolean;
   /** Bar blur radius in dp for the chain blur effect (blur FIRST,
-   *  material second — the library's order). The droplet uses
-   *  this as its REST blur and animates it to 0 while held.
-   *  Default 3dp. */
+   *  material second — the library's order). BUILD 10: the
+   *  droplet keeps this blur at rest AND on hold. Default 3.3dp
+   *  (Blur setting 55). */
   blurRadius?: number;
   style?: ViewStyle;
 };

@@ -15,34 +15,40 @@ export interface NavbarSettings {
    *  tint + dark icons. The blur tint, the veil and the refraction
    *  tint all follow the mode. */
   mode: NavbarMode;
-  /** expo-blur intensity, 0..100. Default 50. Kept deliberately lighter
-   *  than a heavy frost: a heavy blur washes the backdrop into a
-   *  smooth wash, and a wash has no features left for the refraction
-   *  to bend, so the lens effect disappears. 50 keeps the bar glassy
-   *  while the background keeps enough detail for the bend to show. */
+  /** expo-blur intensity, 0..100. BUILD 10 default 55 (was 50):
+   *  maps to a 3.3dp chain blur (55 * 0.06). Kept deliberately
+   *  lighter than a heavy frost: a heavy blur washes the backdrop
+   *  into a smooth wash, and a wash has no features left for the
+   *  refraction to bend, so the lens effect disappears. */
   barBlur: number;
   /** Refraction strength, 0..1. Maps to the native shader's
-   *  glowStrength (rim sheen / highlight). Default 1. */
+   *  glowStrength (rim sheen / highlight, and the binary gate for
+   *  the bend). BUILD 10 default 0.50 (was 1.00) — Haziq's exact
+   *  number. NOTE: this halves the rim sheen/highlight; the bend
+   *  magnitude itself is gated on/off by it, not scaled by it,
+   *  so the refraction bend is unchanged at 0.50. */
   refractionStrength: number;
   /** BUILD 9: the droplet's HOLD magnification M, 1..1.6.
    *  Default 1.35. At rest the droplet has NO magnification at
    *  all (same glass as the bar); only while held does it zoom,
    *  UNIFORMLY — one scale factor about the droplet centre, a
    *  plain zoomed-in image, no fisheye — and the icon inside it
-   *  scales by the same factor. Holding also drops the droplet's
-   *  blur to 0 while keeping the refraction. */
+   *  scales by the same factor. BUILD 10: holding keeps the
+   *  droplet's blur (it no longer drops to 0). */
   dropletMagnification: number;
   /** Edge light intensity, 0..1. Scales the corrected edge-light
    *  gradient stroke (alpha 1 at the top-left and bottom-right
-   *  corners, fading fast to 0). Default 1. */
+   *  corners, fading fast to 0). BUILD 10 default 0.75 (was 1.00)
+   *  — Haziq's exact number. */
   edgeLight: number;
   /** Legibility veil strength, 0..1. An adaptive veil under the icons
    *  so they stay readable over clear glass. Dark mode: a dark
    *  translucent layer. Light mode: a light translucent layer. It sits
    *  between the glass surface and the icons and never touches the blur
-   *  or the refraction. Build 7: 0.02 (was 0.05), deliberately subtle
-   *  — the bar must read clear, and a heavy veil would hide the
-   *  refraction. */
+   *  or the refraction. BUILD 10 default 0.50 (was 0.02) — Haziq's
+   *  exact number, a large jump: the bar now carries a 50% veil, so
+   *  it reads much darker/more solid than the near-clear build 9
+   *  bar. Implemented exactly as given; do not "correct" it back. */
   legibilityVeil: number;
   /** Bar height in dp when labels are shown. Fixed at 64. */
   barHeight: number;
@@ -64,11 +70,14 @@ export interface NavbarSettings {
 
 export const DEFAULT_SETTINGS: NavbarSettings = {
   mode: 'dark',
-  barBlur: 50,
-  refractionStrength: 1,
+  // BUILD 10 (12 Nov 2026) — Haziq's exact new defaults. FLAG:
+  // Veil 0.50 (was 0.02, a 25x jump) and Refraction 0.50 (was
+  // 1.00, halved). Blur 55 (was 50), edge light 0.75 (was 1.00).
+  barBlur: 55,
+  refractionStrength: 0.5,
   dropletMagnification: 1.35,
-  edgeLight: 1,
-  legibilityVeil: 0.02,
+  edgeLight: 0.75,
+  legibilityVeil: 0.5,
   barHeight: 64,
   barWidthPct: 0.9,
   shrunkWidthPct: 0.7,

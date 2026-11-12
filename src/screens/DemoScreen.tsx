@@ -45,9 +45,9 @@ const CARDS = [
   { title: 'Foggy Hills', body: 'Green valley and the road run right under the bar.' },
   { title: 'Live Blur', body: 'The bar blurs whatever is behind it, live, as the list scrolls.' },
   { title: 'Refraction', body: 'The background bends at the glass edge. Look at the rim, not the middle.' },
-  { title: 'The Droplet', body: 'A clear lens over the active tab, the same glass as the bar. At rest it does not magnify at all. Hold it and it lifts over the bar, magnifies uniformly, and the blur drops away.' },
+  { title: 'The Droplet', body: 'A clear lens over the active tab, the same glass as the bar. At rest it does not magnify at all. Hold it and it magnifies uniformly in place — no lift, and the blur stays.' },
   { title: 'Drag the Bar', body: 'Press and drag across the bar. The droplet follows your finger and snaps to the nearest tab.' },
-  { title: 'Tap a Tab', body: 'A tap picks the tab under your finger. The droplet glides there on one soft spring.' },
+  { title: 'Tap a Tab', body: 'A tap picks the tab under your finger. The droplet glides there with exponential in-out easing.' },
   { title: 'Scroll to Shrink', body: 'Scroll down and the labels collapse and the bar shrinks. Switching tabs never grows it back. Scroll up to bring them back.' },
   { title: 'Edge Light', body: 'The rim is brightest at the top-left and bottom-right corners and fades fast to nothing along the edges.' },
   { title: 'iOS 27 Default', body: 'Moderate tint. Not crystal clear, not heavily tinted. The photo stays visible through the glass.' },
@@ -74,13 +74,12 @@ export function DemoScreen(): React.JSX.Element {
   // findNavbarRoot failed and the capture still contains the
   // navbar (build 4 behaviour).
   const [debugText, setDebugText] = useState('glass: …');
-  // BUILD 8 verification aid: the hold-lift value, owned here so
+  // BUILD 8 verification aid: the hold progress, owned here so
   // the 1s poll below can read it (the navbar only animates it).
   // Printed as a third debug line, e.g. "lift 1.00" mid-hold.
-  // Build 7's device check measured a ~3x under-delivery of the
-  // hold lift (rise ~5dp vs -14dp expected); this settles on
-  // device whether lift actually reaches 1. Remove before final
-  // delivery, with the rest of the readout.
+  // BUILD 10: `lift` is hold progress 0..1 (HOLD_LIFT is 0 — the
+  // droplet no longer lifts); it drives the hold magnification.
+  // Remove before final delivery, with the rest of the readout.
   const lift = useSharedValue(0);
   useEffect(() => {
     let alive = true;

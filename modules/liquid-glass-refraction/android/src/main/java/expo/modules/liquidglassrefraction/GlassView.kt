@@ -116,13 +116,14 @@
 //     the droplet centre (magBase = centre + (coord - centre) /
 //     mag, applied BEFORE the edge displacement, as the library
 //     does for its constant magnification) — a plain zoomed-in
-//     image, no fisheye, no per-channel split. Holding also
-//     drops the blur to 0 while keeping the refraction. The
-//     library's radial touch-magnifier warp is NOT used (radial
-//     warp, not uniform zoom). The hold state arrives as a plain
-//     `held` boolean prop; the native side eases magnification
-//     1 -> M and blur 3dp -> 0 over ~200ms itself, so no animated
-//     props ever touch this native view.
+//     image, no fisheye, no per-channel split. BUILD 10: holding
+//     keeps the blur (it no longer drops it to 0) — the ONLY
+//     change on hold is the magnification. The library's radial
+//     touch-magnifier warp is NOT used (radial warp, not uniform
+//     zoom). The hold state arrives as a plain `held` boolean
+//     prop; the native side eases magnification 1 -> M over
+//     ~200ms itself, so no animated props ever touch this native
+//     view.
 //   - DEBUG READOUT, per mode. The old readout reported one
 //     `drawn` flag for the LAST mode drawn, so the bar's own
 //     effect-drawn status was never separately proven (the
@@ -226,7 +227,11 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     const val CAPTURE_SCALE = 2
 
     const val DEFAULT_MODE = "bar"
-    const val DEFAULT_GLOW_STRENGTH = 1.0f
+    // BUILD 10 default 0.5 (was 1.0): Haziq's exact new default.
+    // NOTE: glowStrength scales the rim sheen/highlight and gates
+    // the bend on/off; the bend magnitude itself is NOT scaled by
+    // it, so the refraction bend is unchanged at 0.5.
+    const val DEFAULT_GLOW_STRENGTH = 0.5f
     // Build 8 DIAGNOSTIC, kept in build 9: multiplies the coherent
     // displacement (iLens * bend * bendScale). Default 1.0 = the
     // shipped look. The JS settings' bendDiagnostic switch sets it
@@ -243,12 +248,13 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     // the bar. Only while held does it zoom to M. Default 1.35
     // (the old rim-magnification default, kept as the hold zoom).
     const val DEFAULT_MAGNIFICATION = 1.35f
-    /** Blur radius in dp at the default Blur setting (50/100). Build 7: 3dp, not 6dp — the 6dp
-     *  post-material blur smeared the whole pill milky on device (build 6 verdict). Build 9
-     *  keeps 3dp but moves the blur back in FRONT of the material (the library's order):
-     *  the shader samples the lightly-frosted backdrop, as the library's shader requires.
-     *  The droplet uses this as its REST blur and animates it to 0 while held. */
-    const val DEFAULT_BLUR_RADIUS_DP = 3f
+    /** Blur radius in dp at the default Blur setting (55/100).
+     *  BUILD 10: 3.3dp (was 3dp at Blur 50). The JS mapping is
+     *  barBlur * 0.06, so 55 -> 3.3dp. BUILD 10: the droplet
+     *  keeps this blur at rest AND on hold — holding no longer
+     *  animates it to 0 (Haziq: the droplet must not remove the
+     *  blur). heldAnim now drives magnification ONLY. */
+    const val DEFAULT_BLUR_RADIUS_DP = 3.3f
     /**
      * BUILD 9 — the library-port lens strength, in dp.
      * GlassParams.lensStrengthPx: base 11dp for `clear`, x1.35 with
@@ -265,7 +271,8 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
      *  edgeReflectionStrength (0.35). Scales ONLY the mirror band. */
     const val REFL_STRENGTH = 0.35f
     /** How long the droplet's hold animation takes, in ms:
-     *  magnification 1 -> M and blur 3dp -> 0, eased. */
+     *  magnification 1 -> M, eased. BUILD 10: magnification
+     *  ONLY — the blur no longer animates. */
     const val HOLD_ANIM_MS = 200L
   }
 
@@ -286,8 +293,10 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   // BUILD 9: the droplet's hold state, as a plain boolean prop
   // from JS. The native side eases heldAnim 0 -> 1 over
   // HOLD_ANIM_MS itself (see onDraw), so no animated props ever
-  // touch this native view: magnification goes 1 -> M and the
-  // droplet blur goes blurRadiusDp -> 0. The bar ignores this.
+  // touch this native view: magnification goes 1 -> M. BUILD 10:
+  // the droplet blur NO LONGER animates to 0 while held — it
+  // stays at blurRadiusDp, so heldAnim drives magnification
+  // ONLY. The bar ignores this.
   private var heldTarget = 0f
   private var heldAnim = 0f
   private var heldAnimFrom = 0f
@@ -391,8 +400,9 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   // BUILD 9: the droplet's hold state. A plain boolean prop from
   // JS (set via runOnJS from the gesture worklets, mirroring the
   // lift SharedValue). The native side eases heldAnim 0 -> 1 over
-  // HOLD_ANIM_MS in onDraw: magnification 1 -> M, droplet blur
-  // blurRadiusDp -> 0. The bar ignores this entirely.
+  // HOLD_ANIM_MS in onDraw: magnification 1 -> M. BUILD 10: the
+  // blur does NOT animate to 0 anymore — the droplet keeps its
+  // blur on hold. The bar ignores this entirely.
   fun setHeld(value: Boolean) {
     val target = if (value) 1f else 0f
     if (heldTarget == target) return
@@ -613,9 +623,10 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     if (!canvas.isHardwareAccelerated) return
 
     // BUILD 9: ease the droplet's hold animation toward its
-    // target (magnification 1 -> M, blur 3dp -> 0) over
-    // HOLD_ANIM_MS, and keep invalidating until it settles. The
-    // bar never animates this (heldTarget stays 0 for it).
+    // target (magnification 1 -> M) over HOLD_ANIM_MS, and keep
+    // invalidating until it settles. BUILD 10: magnification
+    // ONLY — the blur no longer animates. The bar never animates
+    // this (heldTarget stays 0 for it).
     if (heldAnim != heldTarget) {
       val now = SystemClock.uptimeMillis()
       val t = ((now - heldAnimStart).toFloat() / HOLD_ANIM_MS).coerceIn(0f, 1f)
@@ -701,8 +712,9 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
    * (blur, material)) was a theoretical swap that was never
    * validated on device in isolation, and it is the one structural
    * difference between our bar path and the library's working
-   * path — so it goes. The droplet at rest gets the same blur as
-   * the bar; while held its blur animates to 0 (material only).
+   * path — so it goes. BUILD 10: the droplet keeps the same blur
+   * as the bar at rest AND on hold (holding no longer drops its
+   * blur to 0); only its magnification animates.
    */
   private fun buildEffect(shader: RuntimeShader, w: Int, h: Int): RenderEffect? {
     val density = resources.displayMetrics.density
@@ -725,9 +737,11 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     shader.setFloatUniform("magnification", mag)
     return try {
       val material = RenderEffect.createRuntimeShaderEffect(shader, "backdrop")
-      // Effective blur: the bar always blurs; the droplet blurs
-      // at rest and animates to 0 while held (refraction stays).
-      val blurDp = if (mode == "droplet") blurRadiusDp * (1f - heldAnim) else blurRadiusDp
+      // Effective blur: the bar and the droplet both blur at
+      // blurRadiusDp, at rest AND on hold. BUILD 10: holding no
+      // longer drops the droplet's blur to 0 — the ONLY change on
+      // hold is the magnification (refraction and blur stay).
+      val blurDp = blurRadiusDp
       val blurPx = (blurDp * density).coerceAtLeast(0f)
       if (blurPx <= 0f) return material
       val blur = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP)
