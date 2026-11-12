@@ -57,6 +57,44 @@
  * "slightly". Code review found no defect capping lift below 1,
  * so the readout settles it on device.
  *
+ * BUILD 9 (12 Nov 2026). Haziq tested build 8 on his own phone:
+ * edge lighting PERFECT, veil PERFECT (do not touch either). The
+ * refraction was "too rainbow and does not bend anything", and the
+ * droplet is REBUILT FROM SCRATCH (standing rule), shape only
+ * from Anivio's droplet, minus all Anivio animations:
+ * - DROPLET SHAPE (Anivio jellyPillPath, shape only): a capsule
+ *   spanning ONE TAB SLOT — width = tab slot width, height = bar
+ *   height minus 2x4dp inset, corner radius = min(tabWidth,
+ *   itemHeight)/2. NOT a 48dp circle. No jelly scaling
+ *   (pillScaleX/Y = 1 always), no jelly springs, no rubber
+ *   banding: a single soft spring for tab moves only. The hold
+ *   swell (a scale transform on the frame) is DELETED — the hold
+ *   magnification is optical (the shader), never a view scale.
+ * - The droplet renders OVER the navbar AND OVER the icons (its
+ *   overlay sits above the icon row now, zIndex 3 vs 2 — builds
+ *   5-8 had it below the icons). Because the droplet glass is
+ *   opaque inside its capsule, the icon and label it covers are
+ *   re-rendered ABOVE the glass inside the droplet frame (one
+ *   duplicate per tab, opacity by the same coverage the icon
+ *   crossfade uses, so at rest the duplicate is pixel-identical
+ *   to the original it covers and there is no seam).
+ * - Same edge light as the navbar: the EdgeLight component is
+ *   reused on the droplet's capsule outline (same corner-fade
+ *   stroke, bright at two opposite corners).
+ * - At REST the droplet has NO magnification at all — it is the
+ *   same glass as the bar (same refraction + blur). ONLY ON HOLD
+ *   does it magnify, UNIFORMLY: one scale factor about the
+ *   droplet centre (the shader's magBase), a plain zoomed-in
+ *   image, no fisheye, no per-channel split. Holding also drops
+ *   the droplet's blur to 0 while keeping the refraction, and
+ *   the icon inside the droplet scales uniformly with it (the
+ *   duplicate icon's scale follows the same lift value). The
+ *   library's radial touch-magnifier warp is NOT used.
+ * - Hold lift with hold/drag priority stays; the droplet still
+ *   lifts over the bar on hold. The bar shader is the new
+ *   library-port model (see GlassView.kt) — the droplet is the
+ *   same glass, so it follows the bar's refraction and blur.
+ *
  * EDGE LIGHT: two overlapping pill-outline rects, each stroked 1.5px
  * white, each with its own radialGradient centred on ONE bright
  * corner — the outline's corner point, top-left and bottom-right
@@ -94,10 +132,12 @@
  * plain ScrollView.
  */
 
-import React, { useCallback, useEffect } from 'react';
-import { Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Platform, StyleSheet, Text, useWindowDimensions, View, type ViewStyle } from 'react-native';
 import Animated, {
   Easing,
+  Extrapolation,
+  interpolate,
   runOnJS,
   runOnUI,
   useAnimatedStyle,
@@ -105,6 +145,7 @@ import Animated, {
   useSharedValue,
   withSpring,
   withTiming,
+  type AnimatedStyle,
   type SharedValue,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -129,8 +170,11 @@ const TINT_MIX = 0.10;
 /** The native shader samples 24dp beyond the pill on every side. */
 const OUTSET = 24;
 
-/** The droplet's resting size: a 48dp lens, fully inside the bar. */
-const DROPLET_DP = 48;
+/** BUILD 9: the droplet's vertical inset, Anivio jellyPillPath
+ *  (inset = 4.dp): the droplet is a capsule spanning one tab slot,
+ *  height = bar height minus 2x4dp, corner radius =
+ *  min(tabWidth, itemHeight)/2. NOT a 48dp circle. */
+const DROPLET_INSET = 4;
 /** How far the droplet lifts above the bar while held, in dp.
  *  Build 8: -20 (was -14). Build 7's device check measured the
  *  mid-hold rise at only ~5dp on the unshrunk bar against -14dp
@@ -145,11 +189,12 @@ const DROPLET_DP = 48;
  *  value is now printed in the on-screen debug readout (see
  *  DemoScreen), which settles on device whether lift reaches 1.
  *  Meanwhile -20dp makes the lift unmistakable while still
- *  reading as "slightly" — do not balloon the droplet. */
+ *  reading as "slightly" — do not balloon the droplet.
+ *  BUILD 9: the hold SWELL (a scale transform on the droplet
+ *  frame) is DELETED. The hold magnification is optical — the
+ *  shader's uniform zoom about the droplet centre — never a view
+ *  scale. No jelly scaling (pillScaleX/Y = 1 always). */
 const HOLD_LIFT = -20;
-/** How much the droplet swells while held (the lens grows, not the bar).
- *  Build 8: 0.25 (was 0.18), same reasoning as HOLD_LIFT. */
-const HOLD_SWELL = 0.25;
 
 /** Icon size in dp; the label is 16dp tall when shown. */
 const ICON_DP = 26;
@@ -297,6 +342,95 @@ function EdgeLight({ intensity, aspect }: { intensity: number; aspect: number })
   );
 }
 
+/**
+ * BUILD 9 — the icon + label of one tab, re-rendered ABOVE the
+ * droplet glass inside the droplet frame.
+ *
+ * WHY A DUPLICATE EXISTS. The droplet overlay sits ABOVE the icon
+ * row now (Haziq: the droplet renders over the navbar AND over the
+ * icons), and the droplet glass is opaque inside its capsule — so
+ * the original icon and label underneath it are hidden wherever
+ * the droplet covers them. The visible icon inside the droplet is
+ * therefore this duplicate, drawn above the glass. At rest it is
+ * pixel-identical to the original it covers (same icon, size,
+ * colour and position, scale 1.0), so there is no seam; on hold
+ * the icon scales uniformly with the droplet's optical zoom (the
+ * same lift value, the same factor M) while the label stays put.
+ * Opacity follows the same coverage the icon crossfade uses (1
+ * when the droplet is centred on this tab, 0 a full slot away),
+ * so a glide crossfades between tabs with no pop — and during a
+ * glide the two half-covered tabs each show half an icon, exactly
+ * as a sliding lens would.
+ * Position: the duplicate is slot-wide and translated by
+ * (index - dropletPos) * slot, so its centre tracks the tab's
+ * centre relative to the droplet frame (the frame itself is
+ * centred on dropletPos).
+ */
+function DropletTabDup({
+  tab,
+  index,
+  tabsLength,
+  dropletPos,
+  barWidth,
+  lift,
+  holdMagnification,
+  iconActive,
+  iconInactive,
+  isActive,
+  labelWrapStyle,
+}: {
+  tab: LiquidTabItem;
+  index: number;
+  tabsLength: number;
+  dropletPos: SharedValue<number>;
+  barWidth: SharedValue<number>;
+  lift: SharedValue<number>;
+  holdMagnification: number;
+  iconActive: string;
+  iconInactive: string;
+  isActive: boolean;
+  labelWrapStyle: AnimatedStyle<ViewStyle>;
+}): React.JSX.Element {
+  const Icon = tab.icon;
+  const dupStyle = useAnimatedStyle(() => {
+    const slot = barWidth.value / tabsLength;
+    const coverage = interpolate(
+      dropletPos.value,
+      [index - 1, index, index + 1],
+      [0, 1, 0],
+      Extrapolation.CLAMP,
+    );
+    return {
+      width: slot,
+      opacity: coverage,
+      transform: [{ translateX: (index - dropletPos.value) * slot }],
+    };
+  });
+  // The icon inside the droplet scales UNIFORMLY with the
+  // droplet's hold zoom: one scale factor, same lift value and
+  // same factor M as the shader's optical zoom. The label does
+  // not scale.
+  const dupIconStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: 1 + (holdMagnification - 1) * lift.value }],
+  }));
+  return (
+    <Animated.View style={[styles.dropletTabDup, dupStyle]} pointerEvents="none">
+      <Animated.View style={dupIconStyle}>
+        <Icon
+          size={ICON_DP}
+          color={isActive ? iconActive : iconInactive}
+          weight={isActive ? 'fill' : 'regular'}
+        />
+      </Animated.View>
+      <Animated.View style={[styles.labelWrap, labelWrapStyle]}>
+        <Text style={[styles.label, { color: isActive ? iconActive : iconInactive }]}>
+          {tab.label}
+        </Text>
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
 export function LiquidNavbar({
   tabs,
   selectedIndex,
@@ -331,6 +465,14 @@ export function LiquidNavbar({
   // 0 = resting over the active tab, 1 = held (lifted over the bar).
   // Owned by the DemoScreen (a prop), so the debug readout can
   // print the lift value — build 8 ground truth for the hold lift.
+
+  // BUILD 9: the droplet's hold state, as React state. The lift
+  // SharedValue drives the droplet's translate/scale on the UI
+  // thread; this boolean mirrors it for the droplet GlassView's
+  // `held` prop (set via runOnJS from the gesture worklets, next
+  // to the lift updates). The native side eases the droplet's
+  // magnification 1 -> M and its blur 3dp -> 0 over ~200ms itself.
+  const [held, setHeld] = useState(false);
 
   // Bar size, driven ONLY by the scroll shrink. Nothing else — no tab
   // switch, no hold — ever changes the bar's size.
@@ -375,20 +517,24 @@ export function LiquidNavbar({
     .onStart(() => {
       'worklet';
       lift.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) });
+      runOnJS(setHeld)(true);
     })
     .onEnd(() => {
       'worklet';
       lift.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
+      runOnJS(setHeld)(false);
     })
     .onFinalize(() => {
       'worklet';
       lift.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
+      runOnJS(setHeld)(false);
     });
 
   const pan = Gesture.Pan()
     .onBegin(() => {
       'worklet';
       lift.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) });
+      runOnJS(setHeld)(true);
     })
     .onUpdate((event) => {
       'worklet';
@@ -402,11 +548,13 @@ export function LiquidNavbar({
     .onEnd(() => {
       'worklet';
       lift.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
+      runOnJS(setHeld)(false);
       selectTab(Math.round(dropletPos.value));
     })
     .onFinalize(() => {
       'worklet';
       lift.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
+      runOnJS(setHeld)(false);
     });
 
   // Build 5: hold/drag have priority over tap. Build 4 let tap win
@@ -434,28 +582,42 @@ export function LiquidNavbar({
     height: barHeight.value + OUTSET * 2,
   }));
 
-  // THE DROPLET. A 48dp clear lens, centred on the ACTIVE ICON —
-  // not on the whole tab slot, and not as big as the bar. The icon
-  // sits in a column with its label: full bar the icon centre is
-  // 24dp below the top, shrunk (labels collapsed) it is 25dp, so
-  // the lens spans 0-48dp / 1-49dp: fully INSIDE the bar at rest.
-  // On hold it lifts above the bar and swells slightly — the lens
-  // grows, the bar and the icons never do. No BlurView anywhere
-  // near it: the lens is the native GlassView only, which magnifies
-  // the icon through its shader (displacement zero at the exact
-  // centre, so the middle icon reads clean) without scaling any
-  // icon view.
+  // THE DROPLET, BUILD 9 (rebuilt from scratch). Anivio's shape,
+  // shape only: a capsule spanning ONE TAB SLOT — width = the tab
+  // slot width, height = bar height minus 2x4dp inset, corner
+  // radius = min(tabWidth, itemHeight)/2 — vertically centred on
+  // the BAR (not on the icon). No jelly scaling (pillScaleX/Y = 1
+  // always), no jelly springs, no rubber banding: the frame only
+  // translates (tab position + hold lift). The hold magnification
+  // is optical — the shader's uniform zoom about the droplet
+  // centre — never a scale transform on the frame, so the old
+  // HOLD_SWELL is gone. At rest the droplet is the same glass as
+  // the bar (no magnification, same refraction + blur); only on
+  // hold does it zoom uniformly and drop its blur to 0 (driven by
+  // the `held` prop into the native view).
   const dropletFrameStyle = useAnimatedStyle(() => {
     const slot = barWidth.value / tabs.length;
+    const height = barHeight.value - DROPLET_INSET * 2;
     const centreX = (dropletPos.value + 0.5) * slot;
-    const contentH = ICON_DP + LABEL_DP * labelFraction.value;
-    const iconCentreY = (barHeight.value - contentH) / 2 + ICON_DP / 2;
     return {
+      width: slot,
+      height,
+      borderRadius: height / 2,
       transform: [
-        { translateX: centreX - DROPLET_DP / 2 },
-        { translateY: iconCentreY - DROPLET_DP / 2 + HOLD_LIFT * lift.value },
-        { scale: 1 + HOLD_SWELL * lift.value },
+        { translateX: centreX - slot / 2 },
+        { translateY: DROPLET_INSET + HOLD_LIFT * lift.value },
       ],
+    };
+  });
+  // The droplet glass wrapper: droplet frame + 48dp, at -24dp,
+  // so the shader's 24dp `outset` region is available and the
+  // frame clips it to the capsule — same arrangement as the bar.
+  const dropletGlassWrapStyle = useAnimatedStyle(() => {
+    const slot = barWidth.value / tabs.length;
+    const height = barHeight.value - DROPLET_INSET * 2;
+    return {
+      width: slot + OUTSET * 2,
+      height: height + OUTSET * 2,
     };
   });
   // Labels fade and collapse with the scroll shrink.
@@ -482,6 +644,11 @@ export function LiquidNavbar({
   // the SVG rect is a capsule on screen (see EdgeLight). At rest
   // the bar is screenWidth * barWidthPct wide and barHeight tall.
   const barAspect = (screenWidth * settings.barWidthPct) / settings.barHeight;
+  // BUILD 9: the droplet's edge light uses the droplet's own rest
+  // aspect (slot width over droplet height), so its stroke is a
+  // capsule on the droplet's outline too.
+  const dropletAspect =
+    (screenWidth * settings.barWidthPct) / tabs.length / (settings.barHeight - DROPLET_INSET * 2);
 
   return (
     <View style={[styles.root, { bottom: insets.bottom + 16 }]}>
@@ -527,25 +694,59 @@ export function LiquidNavbar({
               />
               <EdgeLight intensity={settings.edgeLight} aspect={barAspect} />
             </Animated.View>
-            {/* THE DROPLET, build 5: BELOW the icon row, ABOVE the
-                glass. It renders before the icon row (and the icon
-                row carries the higher zIndex), so the real icon stays
-                razor sharp on top of the lens while the lens bends
-                only the background behind it — clearer than the bar.
-                It never intercepts touches. On hold it lifts above
-                the bar silhouette: the bar is overflow visible now,
-                so the lift is not clipped. */}
-            <Animated.View style={[styles.dropletOverlay, { zIndex: 1 }]} pointerEvents="none">
+            {/* THE DROPLET, BUILD 9 (rebuilt from scratch): ABOVE
+                the icon row (zIndex 3 vs the row's 2) and above the
+                bar glass — over the navbar AND over the icons, not
+                below the icons as in builds 5-8. The frame is a
+                slot-width capsule (Anivio's shape, shape only)
+                holding the same glass as the bar, the same edge
+                light on its capsule outline, and — above the glass
+                — one duplicate icon + label per tab (see
+                DropletTabDup): the droplet glass is opaque inside
+                its capsule, so the originals underneath it are
+                hidden wherever it covers them, and the visible
+                icon inside the droplet is the duplicate, which
+                scales uniformly on hold. It never intercepts
+                touches. On hold it lifts above the bar silhouette:
+                the bar is overflow visible, so the lift is not
+                clipped. */}
+            <Animated.View style={[styles.dropletOverlay, { zIndex: 3 }]} pointerEvents="none">
               <Animated.View style={[styles.dropletFrame, dropletFrameStyle]}>
                 {HAS_REFRACTION ? (
-                  <View style={styles.dropletGlass}>
+                  <Animated.View style={[styles.dropletGlass, dropletGlassWrapStyle]}>
                     <GlassView
                       style={StyleSheet.absoluteFill}
                       mode="droplet"
                       magnification={settings.dropletMagnification}
+                      held={held}
+                      tintMix={TINT_MIX}
+                      tintColor={tintColor}
+                      glowStrength={settings.refractionStrength}
+                      blurRadius={blurRadiusDp}
+                      bendScale={1}
                     />
-                  </View>
+                  </Animated.View>
                 ) : null}
+                <View
+                  style={[StyleSheet.absoluteFill, { backgroundColor: veilColor, opacity: settings.legibilityVeil }]}
+                />
+                <EdgeLight intensity={settings.edgeLight} aspect={dropletAspect} />
+                {tabs.map((tab, index) => (
+                  <DropletTabDup
+                    key={tab.key}
+                    tab={tab}
+                    index={index}
+                    tabsLength={tabs.length}
+                    dropletPos={dropletPos}
+                    barWidth={barWidth}
+                    lift={lift}
+                    holdMagnification={settings.dropletMagnification}
+                    iconActive={iconActive}
+                    iconInactive={iconInactive}
+                    isActive={index === selectedIndex}
+                    labelWrapStyle={labelWrapStyle}
+                  />
+                ))}
               </Animated.View>
             </Animated.View>
             <View style={[styles.iconRow, { zIndex: 2 }]}>
@@ -615,13 +816,14 @@ const styles = StyleSheet.create({
     left: -OUTSET,
     top: -OUTSET,
   },
-  // Droplet glass wrapper: droplet frame (48dp) + 48dp, at -24dp.
+  // Droplet glass wrapper: droplet frame (slot x barHeight-8dp)
+  // + 48dp, at -24dp. Its width/height come from the animated
+  // dropletGlassWrapStyle (the slot and the bar height animate);
+  // this style only carries the -24dp offset.
   dropletGlass: {
     position: 'absolute',
     left: -OUTSET,
     top: -OUTSET,
-    width: DROPLET_DP + OUTSET * 2,
-    height: DROPLET_DP + OUTSET * 2,
   },
   veil: {
     position: 'absolute',
@@ -661,13 +863,27 @@ const styles = StyleSheet.create({
     bottom: 0,
     overflow: 'visible',
   },
+  // BUILD 9: the droplet frame is a slot-width capsule (width,
+  // height and borderRadius all come from the animated
+  // dropletFrameStyle). Overflow hidden clips the glass wrapper
+  // to the capsule; the frame itself is overflow visible to its
+  // parent (the overlay), so the hold lift is not clipped.
   dropletFrame: {
     position: 'absolute',
     left: 0,
     top: 0,
-    width: DROPLET_DP,
-    height: DROPLET_DP,
-    borderRadius: DROPLET_DP / 2,
     overflow: 'hidden',
+  },
+  // BUILD 9: one tab's duplicate icon + label, re-rendered above
+  // the droplet glass (see DropletTabDup). Slot-wide, full height,
+  // content centred — its translateX/opacity come from the
+  // animated dupStyle.
+  dropletTabDup: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

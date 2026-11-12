@@ -18,9 +18,10 @@
 //      every glass view so there is no feedback loop;
 //   2. in onDraw it records a hardware RenderNode that draws the
 //      captured bitmap cropped to this view's rectangle, sets a
-//      RenderEffect on THAT node (blur chain + AGSL material for the
-//      bar, AGSL material alone for the droplet), and draws the
-//      node. The shader's `backdrop` uniform is the node's recorded
+//      RenderEffect on THAT node (blur FIRST, then the AGSL material
+//      — the library's order — for both modes; the droplet's blur
+//      animates to 0 while it is held), and draws the node. The
+//      shader's `backdrop` uniform is the node's recorded
 //      content — real backdrop pixels — so the bend is real.
 //   3. A cheap sampled hash of this view's rectangle in the bitmap
 //      skips recapture and re-invalidation entirely when the backdrop
@@ -41,9 +42,11 @@
 // carries the animated size (pill + 48dp, at left/top -24dp) and
 // the native view inside takes StyleSheet.absoluteFill — so the
 // shader's 24dp `outset` region is available and the container
-// clips it to the pill shape. The bar shader is adapted from
-// GlassBarShader.kt in Anivio (GPL-3.0); the droplet lens shader is
-// original. Fallback below API 33: a plain tinted pill via
+// clips it to the pill shape. The glass shader is ONE unified
+// source (build 9) porting the displacement model of
+// react-native-liquid-glassmorphism (the library the Pioneer Gym
+// live app used); the droplet is the same glass over a slot-width
+// capsule. Fallback below API 33: a plain tinted pill via
 // expo-blur (bar) / nothing (droplet) — never a crash, never a
 // fake white circle.
 
@@ -52,16 +55,20 @@ import type { ViewStyle } from 'react-native';
 
 export type GlassViewProps = {
   /** "bar" = capsule glass with tint + rim sheen + blur; "droplet" =
-   *  a completely clear magnifying lens (no tint, no blur). */
+   *  the SAME glass over a slot-width capsule. At rest the droplet
+   *  has NO magnification (magnification 1.0); only while held
+   *  does it zoom uniformly to `magnification` and drop its blur
+   *  to 0. */
   mode?: 'bar' | 'droplet';
-  /** Strength of the bar's rim sheen / highlight. Default 1.0. */
+  /** Strength of the bar's rim sheen / highlight. Default 1.0.
+   *  Also gates the refraction (0 = no bend, no sheen). */
   glowStrength?: number;
   /** BUILD 8 DIAGNOSTIC. Multiplies the bar shader's coherent
-   *  displacement (56dp * bend * bendScale). Default 1.0 = the
+   *  displacement (iLens * bend * bendScale). Default 1.0 = the
    *  shipped look. Set to 3.0 only when the bendDiagnostic setting
    *  is ON, to prove on device whether ANY displacement reaches
    *  the screen. Never the shipped look by default. The droplet
-   *  mode ignores it. */
+   *  mode ignores it (always 1.0). */
   bendScale?: number;
   /** Mix of the tint colour into the sampled backdrop. Build 6: 0.15
    *  (clear glass). Not a user setting. */
@@ -69,12 +76,22 @@ export type GlassViewProps = {
   /** Tint colour the bar shader mixes in: dark [28/255, 28/255,
    *  30/255] or white [1, 1, 1]. Follows the navbar mode. */
   tintColor?: [number, number, number];
-  /** Droplet lens magnification at the rim. 1.0 is no lens. The
-   *  displacement is zero at the exact centre and grows toward the
-   *  rim, so the middle icon reads clean. Default 1.35 (build 6). */
+  /** BUILD 9: the droplet's HOLD magnification M — one uniform
+   *  scale factor about the droplet centre (a plain zoom, no
+   *  fisheye, no per-channel split). At rest the droplet renders
+   *  at 1.0 (no magnification at all, same glass as the bar);
+   *  only while `held` is true does it zoom to M. Default 1.35.
+   *  The bar ignores it (always 1.0). */
   magnification?: number;
-  /** Bar blur radius in dp for the chain blur effect. The droplet
-   *  never blurs. Default 10dp. */
+  /** BUILD 9: the droplet's hold state. A plain boolean prop; the
+   *  native side eases magnification 1 -> M and the droplet blur
+   *  blurRadius -> 0 over ~200ms itself, so no animated props
+   *  ever touch this native view. The bar ignores it. */
+  held?: boolean;
+  /** Bar blur radius in dp for the chain blur effect (blur FIRST,
+   *  material second — the library's order). The droplet uses
+   *  this as its REST blur and animates it to 0 while held.
+   *  Default 3dp. */
   blurRadius?: number;
   style?: ViewStyle;
 };
@@ -89,13 +106,15 @@ export const GlassView = requireNativeViewManager<GlassViewProps>(
 
 // BUILD 6 verification aid. The native glass state as a two-line
 // string, for the on-screen debug readout in the DemoScreen:
-//   "cap 540x1200 | nav Y hid Y | drawn Y (bar)
+//   "cap 540x1200 | nav Y hid Y | drawn bar Y drop Y (bar)
 //    hash 1a2b3c4d | rect 24,890,372,1012"
 // cap = shared backdrop bitmap size; nav = a navbar root was found;
-// hid = it was actually hidden during the last capture; drawn = the
-// RenderEffect path drew at least once; hash/rect = the last
-// backdrop hash and this view's rectangle in the bitmap. REMOVE
-// before final delivery, with the readout and GlassDebugState.
+// hid = it was actually hidden during the last capture; drawn bar /
+// drop = the RenderEffect path drew at least once, PER MODE (build
+// 9: the old single flag reported only the last mode drawn, so the
+// bar's own status was never separately proven); hash/rect = the
+// last backdrop hash and this view's rectangle in the bitmap.
+// REMOVE before final delivery, with the readout and GlassDebugState.
 const GlassModule = requireNativeModule<{
   getGlassDebug: () => Promise<string>;
 }>('LiquidGlassRefraction');

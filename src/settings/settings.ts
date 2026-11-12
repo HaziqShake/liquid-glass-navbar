@@ -24,11 +24,13 @@ export interface NavbarSettings {
   /** Refraction strength, 0..1. Maps to the native shader's
    *  glowStrength (rim sheen / highlight). Default 1. */
   refractionStrength: number;
-  /** Droplet lens magnification at the rim, 1..1.6. Default 1.35
-   *  (build 6, was 1.25). The displacement is zero at the exact
-   *  centre of the droplet and grows toward the rim, so the middle
-   *  icon reads clean. The lens does the magnifying — the icon
-   *  views are never scaled. */
+  /** BUILD 9: the droplet's HOLD magnification M, 1..1.6.
+   *  Default 1.35. At rest the droplet has NO magnification at
+   *  all (same glass as the bar); only while held does it zoom,
+   *  UNIFORMLY — one scale factor about the droplet centre, a
+   *  plain zoomed-in image, no fisheye — and the icon inside it
+   *  scales by the same factor. Holding also drops the droplet's
+   *  blur to 0 while keeping the refraction. */
   dropletMagnification: number;
   /** Edge light intensity, 0..1. Scales the corrected edge-light
    *  gradient stroke (alpha 1 at the top-left and bottom-right

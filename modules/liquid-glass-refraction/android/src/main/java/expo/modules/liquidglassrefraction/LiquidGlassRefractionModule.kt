@@ -78,6 +78,13 @@ class LiquidGlassRefractionModule : Module() {
         view.setMagnification(magnification)
       }
 
+      // BUILD 9: the droplet's hold state. A plain boolean prop;
+      // the native side eases magnification 1 -> M and the droplet
+      // blur blurRadius -> 0 over ~200ms itself. The bar ignores it.
+      Prop("held", false) { view: GlassView, held: Boolean ->
+        view.setHeld(held)
+      }
+
       // Blur radius in dp for the bar's chain blur effect. The
       // droplet never blurs. Default 10dp.
       Prop("blurRadius", GlassView.DEFAULT_BLUR_RADIUS_DP) { view: GlassView, blurRadius: Float ->

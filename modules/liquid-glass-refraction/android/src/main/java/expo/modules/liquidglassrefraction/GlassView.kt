@@ -32,44 +32,104 @@
 //      or the droplet moves, the hash differs and one fresh frame
 //      is captured and painted.
 //
-// BUILD 6 (12 Nov 2026): bar shader = the v3 coherent bend, ported
-// exactly (bend band 24dp, all channels displaced TOGETHER by
-// 56dp * bend along -normal, 6dp tangent spread, +/-4dp fringe),
-// the displaced sample as the rim band's base colour (builds 4-5
-// kept the undisplaced sample as the base, so nothing ever moved);
-// effect chain SWAPPED to material FIRST, blur AFTER
-// (createChainEffect(blur, material) = blur(material(source))).
-// Droplet: magnification 1.35 and a bright lens rim with a faint
-// dark ring just inside it. GlassDebugState: a build-6
-// verification aid (capture size, navbar found/hidden, effect
-// drawn, last hash/rect) exposed to JS so the DemoScreen can print
-// it on screen. Remove before final delivery.
+// BUILD 9 (12 Nov 2026). Haziq tested build 8 on his own phone:
+// edge lighting PERFECT, veil PERFECT (do not touch either). The
+// refraction was "too rainbow and does not bend anything". This
+// build ports the DISPLACEMENT MODEL of react-native-liquid-
+// glassmorphism — the library the Pioneer Gym live app used before
+// its glass navbar was scrapped (27 Oct 2026) — into the one
+// unified glass shader below, and rebuilds the droplet from
+// scratch. What changed, and why:
 //
-// BUILD 7 (12 Nov 2026). Clarity, and the edge light (see
-// LiquidNavbar.tsx — the geometry bug was on the JS side):
-//   - Chain blur 6dp -> 3dp, tint 0.15 -> 0.10, veil 0.05 -> 0.02
-//     (TS side). Build 6 on Appetize: refraction works and the
-//     droplet is a clear lens, but the bar still read frosted/milky
-//     — the 6dp post-material blur smeared the whole pill. The
-//     bend (up to 56dp) still dwarfs a 3dp blur.
-//   - The shader itself is unchanged: the v3 coherent bend, the
-//     top-weighted sheen/highlight (light from above — a glass
-//     cue, kept), the droplet lens rim.
-//
-// BUILD 8 (12 Nov 2026). Exaggerated-bend DIAGNOSTIC. Device
-// evidence (two rigorous Appetize checks of build 7) shows ZERO
-// displacement at the rim while the sim measures 12.5dp — the
-// code is correct as written, the APK contains it, the device
-// still shows nothing, so no more theorising from the sim. The
-// bar shader gains a `bendScale` uniform (default 1.0) that
-// multiplies the coherent displacement (56dp * bend * bendScale),
-// wired to a `bendScale` prop (default 1.0). The JS settings gain
-// `bendDiagnostic` (default false); when ON the bar gets
-// bendScale 3, so the device check can see whether ANY
-// displacement reaches the screen. If 3x shows nothing, the
-// displacement path is dead on device; if 3x shows, 1.0 is below
-// visibility. DIAGNOSTIC ONLY — never the shipped look, default
-// OFF. The droplet shader is untouched (no bendScale there).
+//   - DISPLACEMENT (the fix). Builds 6-8 displaced all channels
+//     together by up to 56dp over a narrow ~24dp exp band, with a
+//     +/-4dp per-channel fringe on top. Two careful device checks
+//     saw ZERO coherent displacement at the rim while the sim
+//     measured up to 46dp — and a faint rainbow fringe WAS visible
+//     at the bottom edge. That combination (fringe visible,
+//     coherent jump invisible) is exactly what a bend of ~0 with a
+//     surviving +/-4dp split looks like. The code comparison
+//     against the library found NO defect in the capture /
+//     RenderNode / coordinate plumbing — it matches the library
+//     line for line (same shared half-res capture, same srcRect
+//     math, same RenderNode record + setRenderEffect +
+//     drawRenderNode, same units: resolution in view px, iLens and
+//     every displacement term in px via density) — and the droplet
+//     proves the same path renders a working lens on device. So
+//     the suspect was never the plumbing; it was the shader's own
+//     displacement model and effect arrangement, which matched the
+//     proven library in NOTHING. Build 9 therefore adopts the
+//     library's configuration wholesale instead of tuning the old
+//     model blindly:
+//       * rim = 1 - clamp(-d / lensW, 0, 1), lensW =
+//         max(28px, iCorner * 1.4) — a wide LINEAR band (~45dp on
+//         our 64dp bar), 0 in the interior, 1 at the edge.
+//       * bend = rim * rim * axisFade, where axisFade =
+//         smoothstep(0.15, 0.8, conf) eases the lens off toward
+//         the medial axis (conf from a WIDE-epsilon central
+//         difference of the SDF, as the library does) so the top
+//         and bottom rings do not collide into a seam.
+//       * disp = n2 * bend * iLens * edgeGuard, ONE coherent
+//         displacement along the surface normal for ALL channels.
+//         iLens = 14.85dp * thickness = ~11dp at thickness 0.75
+//         (GlassParams.lensStrengthPx: base 11dp for clear, x1.35
+//         with refraction on). edgeGuard = smoothstep(0,
+//         max(12, reflW * 0.18), -d) tapers refraction to zero at
+//         the outermost pixels.
+//       * reflDisp = n2 * reflMask * (iLens * 3.0 * iRefl) *
+//         edgeGuard, reflMask = edgeBand * edgeBand * axisFade,
+//         iRefl = 0.35 (edgeReflectionStrength) — a broad, soft
+//         mirror band, not a thin streak.
+//       * NO chromatic split at all (ca = 0). The library's own
+//         ca is n2 * bend * iLens * 0.018 (~0.2dp, invisible) and
+//         the gym ran iridescence=0. The Anivio per-channel split
+//         (red 16dp / green 62dp / blue 57dp) is DELETED — that
+//         split is the rainbow Haziq sees, and because it
+//         displaces channels differently with no coherent
+//         component, it can never bend anything.
+//       * Chain order SWAPPED BACK to the library's:
+//         createChainEffect(material, blur) = material(blur(
+//         source)) — the blur runs FIRST and the material shader
+//         samples the LIGHTLY-FROSTED backdrop, exactly as the
+//         library's shader comment requires ("`content` is a
+//         LIGHTLY-frosted backdrop (kept crisp enough to
+//         refract)"). Build 6 swapped this to material-first on
+//         a theoretical argument that was never validated on
+//         device in isolation; the material-first order is the
+//         ONE structural difference between our bar path and the
+//         library's working path (the droplet, which works on
+//         device, has no blur at all), so it goes. Blur stays
+//         3dp, tintMix 0.10, veil 0.02 — clarity untouched.
+//       * Samples are CLAMPED to the node bounds, as the library
+//         does (ours never clamped).
+//     The old 56dp model, the exp rim band, the tangent spread
+//     and the +/-4dp fringe are all deleted, not tuned.
+//   - The sheen / highlight lighting terms are UNCHANGED in shape
+//     (narrow exp rim, top-weighted): they are part of the rim
+//     look Haziq confirmed perfect, so they keep their own rim
+//     mask and do not follow the new wide displacement rim.
+//   - DROPLET, REBUILT FROM SCRATCH (standing rule). One unified
+//     shader for both modes now: at REST the droplet is the same
+//     glass as the bar (same refraction + blur, magnification
+//     1.0 — NO magnification at all). ONLY ON HOLD it magnifies,
+//     and the magnification is UNIFORM: one scale factor about
+//     the droplet centre (magBase = centre + (coord - centre) /
+//     mag, applied BEFORE the edge displacement, as the library
+//     does for its constant magnification) — a plain zoomed-in
+//     image, no fisheye, no per-channel split. Holding also
+//     drops the blur to 0 while keeping the refraction. The
+//     library's radial touch-magnifier warp is NOT used (radial
+//     warp, not uniform zoom). The hold state arrives as a plain
+//     `held` boolean prop; the native side eases magnification
+//     1 -> M and blur 3dp -> 0 over ~200ms itself, so no animated
+//     props ever touch this native view.
+//   - DEBUG READOUT, per mode. The old readout reported one
+//     `drawn` flag for the LAST mode drawn, so the bar's own
+//     effect-drawn status was never separately proven (the
+//     readout always said "(droplet)"). Now the bar and the
+//     droplet report separately: "drawn bar Y drop Y". If the
+//     bar's effect path ever fails on device while the
+//     droplet's works, the readout says so directly.
 //
 // PERFORMANCE RULES (all deliberate, do not "optimise" them away):
 //   - ONE shared bitmap per root per frame; bar and droplet share
@@ -82,15 +142,14 @@
 //   - No expo-blur in the bar path: the RenderEffect chain does the
 //     blur (bar only) and the refraction in one GPU pass.
 //
-// MODES. One class, two shaders, chosen by the `mode` prop:
-//   - "bar": the Anivio-adapted capsule shader (GlassBarShader.kt,
-//     GPL-3.0, attribution kept below): tintMix 0.10 (build 7),
-//     tint colour by mode, rim sheen, and the v3 COHERENT bend at
-//     the rim (all channels together, 56dp * bend, band 24dp).
-//     The chain blurs AFTER the material, so the bend survives.
-//   - "droplet": Haziq's lens. Original shader: no tint, no blur,
-//     completely clear. Magnification is zero at the exact centre
-//     and grows toward the rim, so the middle icon reads clean.
+// MODES. One class, ONE shader, chosen by the `mode` prop:
+//   - "bar": the capsule glass with the library-port refraction,
+//     tintMix 0.10, rim sheen, and the blur-first chain.
+//   - "droplet": the SAME glass, over a slot-width capsule. At
+//     rest magnification is 1.0 (no zoom, same glass as the bar);
+//     on hold it zooms uniformly about its centre and its blur
+//     drops to 0. The droplet's shape and z-order live in
+//     LiquidNavbar.tsx; this file only renders the glass.
 // FALLBACK (API < 33, no RuntimeShader): the bar draws a plain
 // tinted pill with Canvas; the droplet draws nothing rather than a
 // fake white circle. Never a crash.
@@ -109,6 +168,7 @@ import android.graphics.RenderNode
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -122,12 +182,19 @@ import expo.modules.kotlin.AppContext
  * screen. This is what settles, from the outside, whether the
  * navbar root was really found and hidden during capture and
  * whether the effect really drew. REMOVE before final delivery.
+ *
+ * BUILD 9: the effect-drawn flag is per mode. The old single flag
+ * reported the LAST mode drawn, so the bar's own effect-drawn
+ * status was never separately proven (the readout always ended
+ * "(droplet)"). Now "drawn bar Y drop N" says exactly which
+ * glass actually drew through the effect path.
  */
 internal object GlassDebugState {
   @Volatile var bitmapSize = "—"
   @Volatile var navbarFound = false
   @Volatile var navbarHidden = false
-  @Volatile var effectDrawn = false
+  @Volatile var effectDrawnBar = false
+  @Volatile var effectDrawnDroplet = false
   @Volatile var lastHash = "—"
   @Volatile var lastRect = "—"
   @Volatile var lastMode = "—"
@@ -135,8 +202,9 @@ internal object GlassDebugState {
   fun snapshot(): String {
     val nav = if (navbarFound) "Y" else "N"
     val hid = if (navbarHidden) "Y" else "N"
-    val drw = if (effectDrawn) "Y" else "N"
-    return "cap $bitmapSize | nav $nav hid $hid | drawn $drw ($lastMode)\n" +
+    val bar = if (effectDrawnBar) "Y" else "N"
+    val drop = if (effectDrawnDroplet) "Y" else "N"
+    return "cap $bitmapSize | nav $nav hid $hid | drawn bar $bar drop $drop ($lastMode)\n" +
       "hash $lastHash | rect $lastRect"
   }
 }
@@ -159,39 +227,77 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
 
     const val DEFAULT_MODE = "bar"
     const val DEFAULT_GLOW_STRENGTH = 1.0f
-    // Build 8 DIAGNOSTIC: multiplies the bar shader's coherent
-    // displacement (56dp * bend * bendScale). Default 1.0 = the
+    // Build 8 DIAGNOSTIC, kept in build 9: multiplies the coherent
+    // displacement (iLens * bend * bendScale). Default 1.0 = the
     // shipped look. The JS settings' bendDiagnostic switch sets it
     // to 3.0 to prove whether ANY displacement reaches the screen.
-    // Never the shipped look by default; see BAR_SHADER_SOURCE.
+    // Never the shipped look by default; see GLASS_SHADER_SOURCE.
     const val DEFAULT_BEND_SCALE = 1.0f
     // Build 7: tint 0.10, not 0.15 — the bar must read CLEAR, not frosted.
     const val DEFAULT_TINT_MIX = 0.10f
     // Dark tint (28,28,30), the iOS 27 default fill colour.
     val DEFAULT_TINT_COLOR = floatArrayOf(28f / 255f, 28f / 255f, 30f / 255f)
-    // Build 6: magnification 1.35, not 1.25 — the lens must read.
+    // BUILD 9: the droplet's HOLD magnification M (uniform zoom
+    // about the droplet centre). At rest the droplet renders at
+    // magnification 1.0 — NO magnification at all, same glass as
+    // the bar. Only while held does it zoom to M. Default 1.35
+    // (the old rim-magnification default, kept as the hold zoom).
     const val DEFAULT_MAGNIFICATION = 1.35f
     /** Blur radius in dp at the default Blur setting (50/100). Build 7: 3dp, not 6dp — the 6dp
-     *  post-material blur smeared the whole pill milky on device (build 6 verdict); the bend
-     *  (up to 56dp) still dwarfs a 3dp blur, so the shift survives. If the bend ever washes
-     *  out, drop to 2dp — do NOT move the blur back in front of the material. */
+     *  post-material blur smeared the whole pill milky on device (build 6 verdict). Build 9
+     *  keeps 3dp but moves the blur back in FRONT of the material (the library's order):
+     *  the shader samples the lightly-frosted backdrop, as the library's shader requires.
+     *  The droplet uses this as its REST blur and animates it to 0 while held. */
     const val DEFAULT_BLUR_RADIUS_DP = 3f
+    /**
+     * BUILD 9 — the library-port lens strength, in dp.
+     * GlassParams.lensStrengthPx: base 11dp for `clear`, x1.35 with
+     * refraction on = 14.85dp; times the gym navbar's thickness
+     * 0.75 = ~11.1dp. (Note: the library's `refraction` prop
+     * defaults to false, so the gym bar as configured actually ran
+     * 11dp x 0.75 = 8.25dp; the 14.85dp figure is the brief's
+     * prescribed value and is used here. Either way the bend is
+     * ~8-11dp at the rim — subtle, wide-band, and coherent — not
+     * the old 56dp narrow-band jump.)
+     */
+    const val LENS_DP = 14.85f * 0.75f
+    /** Edge-reflection band strength, the gym navbar's
+     *  edgeReflectionStrength (0.35). Scales ONLY the mirror band. */
+    const val REFL_STRENGTH = 0.35f
+    /** How long the droplet's hold animation takes, in ms:
+     *  magnification 1 -> M and blur 3dp -> 0, eased. */
+    const val HOLD_ANIM_MS = 200L
   }
 
   private var mode: String = DEFAULT_MODE
   private var glowStrength: Float = DEFAULT_GLOW_STRENGTH
-  // Build 8 DIAGNOSTIC: multiplies the bar shader's coherent
-  // displacement. Default 1.0 (shipped look); 3.0 only when the
-  // bendDiagnostic setting is ON. Droplet mode ignores it.
+  // Build 8 DIAGNOSTIC: multiplies the coherent displacement.
+  // Default 1.0 (shipped look); 3.0 only from the bendDiagnostic
+  // setting, to prove on device whether ANY displacement reaches
+  // the screen. Droplet mode ignores it (always 1.0).
   private var bendScale: Float = DEFAULT_BEND_SCALE
   private var tintMix: Float = DEFAULT_TINT_MIX
   private var tintColor: FloatArray = DEFAULT_TINT_COLOR.copyOf()
+  // BUILD 9: the droplet's HOLD magnification M. At rest the
+  // droplet renders at 1.0 (no zoom); while held it zooms to M,
+  // uniformly about its centre. The bar ignores this (always 1.0).
   private var magnification: Float = DEFAULT_MAGNIFICATION
   private var blurRadiusDp: Float = DEFAULT_BLUR_RADIUS_DP
+  // BUILD 9: the droplet's hold state, as a plain boolean prop
+  // from JS. The native side eases heldAnim 0 -> 1 over
+  // HOLD_ANIM_MS itself (see onDraw), so no animated props ever
+  // touch this native view: magnification goes 1 -> M and the
+  // droplet blur goes blurRadiusDp -> 0. The bar ignores this.
+  private var heldTarget = 0f
+  private var heldAnim = 0f
+  private var heldAnimFrom = 0f
+  private var heldAnimStart = 0L
 
   // Compiled for the current mode only. RuntimeShader (AGSL) needs
   // API 33+. Null below API 33, or if compilation ever fails — the
   // view then falls back to the Canvas tint and never crashes.
+  // BUILD 9: one unified shader source for both modes; the modes
+  // differ only in uniforms (magnification, blur, bendScale).
   private var shader: RuntimeShader? = null
 
   // Hardware node the captured bitmap is recorded into. The
@@ -245,10 +351,10 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     invalidate()
   }
 
-  // Build 8 DIAGNOSTIC. Multiplies the bar shader's coherent
-  // displacement (56dp * bend * bendScale). Default 1.0 = shipped
-  // look; 3.0 only from the bendDiagnostic setting, to prove on
-  // device whether ANY displacement reaches the screen.
+  // Build 8 DIAGNOSTIC. Multiplies the coherent displacement.
+  // Default 1.0 (shipped look); 3.0 only when the bendDiagnostic
+  // setting is ON, so the device check can see whether ANY bend
+  // reaches the screen.
   fun setBendScale(value: Float) {
     if (bendScale == value) return
     bendScale = value
@@ -267,6 +373,9 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     invalidate()
   }
 
+  // BUILD 9: the droplet's HOLD magnification M (uniform zoom
+  // about the droplet centre). At rest the droplet renders at
+  // 1.0 — this value only applies while held. The bar ignores it.
   fun setMagnification(value: Float) {
     if (magnification == value) return
     magnification = value
@@ -277,6 +386,20 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     if (blurRadiusDp == valueDp) return
     blurRadiusDp = valueDp
     invalidate()
+  }
+
+  // BUILD 9: the droplet's hold state. A plain boolean prop from
+  // JS (set via runOnJS from the gesture worklets, mirroring the
+  // lift SharedValue). The native side eases heldAnim 0 -> 1 over
+  // HOLD_ANIM_MS in onDraw: magnification 1 -> M, droplet blur
+  // blurRadiusDp -> 0. The bar ignores this entirely.
+  fun setHeld(value: Boolean) {
+    val target = if (value) 1f else 0f
+    if (heldTarget == target) return
+    heldTarget = target
+    heldAnimFrom = heldAnim
+    heldAnimStart = SystemClock.uptimeMillis()
+    postInvalidateOnAnimation()
   }
 
   override fun onAttachedToWindow() {
@@ -489,6 +612,24 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     // backdrop bitmap.
     if (!canvas.isHardwareAccelerated) return
 
+    // BUILD 9: ease the droplet's hold animation toward its
+    // target (magnification 1 -> M, blur 3dp -> 0) over
+    // HOLD_ANIM_MS, and keep invalidating until it settles. The
+    // bar never animates this (heldTarget stays 0 for it).
+    if (heldAnim != heldTarget) {
+      val now = SystemClock.uptimeMillis()
+      val t = ((now - heldAnimStart).toFloat() / HOLD_ANIM_MS).coerceIn(0f, 1f)
+      // Ease-out cubic: fast off the mark, gentle landing — the
+      // same feel as the lift transform's 180ms ease.
+      val eased = 1f - (1f - t) * (1f - t) * (1f - t)
+      heldAnim = heldAnimFrom + (heldTarget - heldAnimFrom) * eased
+      if (t < 1f) {
+        postInvalidateOnAnimation()
+      } else {
+        heldAnim = heldTarget
+      }
+    }
+
     val bmp = shared?.bitmap
     val node = effectNode
     val shader = shaderForMode()
@@ -501,8 +642,14 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
       node.endRecording()
       node.setRenderEffect(buildEffect(shader, w, h))
       canvas.drawRenderNode(node)
-      // Build 6 debug: the effect really drew at least once.
-      GlassDebugState.effectDrawn = true
+      // Build 9 debug: the effect really drew, PER MODE. The old
+      // single flag reported the last mode drawn, so the bar's own
+      // status was never separately proven.
+      if (mode == "droplet") {
+        GlassDebugState.effectDrawnDroplet = true
+      } else {
+        GlassDebugState.effectDrawnBar = true
+      }
       GlassDebugState.lastMode = mode
       if (!effectDrawnLogged) {
         effectDrawnLogged = true
@@ -531,8 +678,11 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     shader?.let { return it }
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
     return try {
-      RuntimeShader(if (mode == "droplet") DROPLET_SHADER_SOURCE else BAR_SHADER_SOURCE)
-        .also { shader = it }
+      // BUILD 9: ONE unified shader for both modes. The bar and
+      // the droplet are the same glass; the modes differ only in
+      // uniforms (magnification, blur, bendScale) and in the
+      // droplet's hold animation.
+      RuntimeShader(GLASS_SHADER_SOURCE).also { shader = it }
     } catch (t: Throwable) {
       if (!shaderErrorLogged) {
         shaderErrorLogged = true
@@ -543,49 +693,46 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   }
 
   /**
-   * AGSL material FIRST, blur AFTER — one chained RenderEffect on
-   * the node. Build 6 swaps build 5's order.
-   *
-   * WHY. Android docs (RenderEffect.createChainEffect): "composes
-   * 'inner' with 'outer', such that the results of 'inner' are
-   * treated as the source bitmap passed to 'outer', i.e.
-   * result = outer(inner(source))". So createChainEffect(blur,
-   * material) runs the material shader on the sharp captured
-   * bitmap FIRST and blurs the BENT result after. Build 5 had
-   * createChainEffect(material, blur) = material(blur(source)):
-   * the bend displaced an already-soft image, so no shift was
-   * ever visible and the rim read as a faint line. The bend
-   * displaces sharp features by up to 56dp (see the shader), far
-   * more than the 3dp blur that follows it, so the shift survives
-   * the blur. If the bend still washes out on device, drop the
-   * blur to 2dp — do NOT move it back in front of the material.
-   * The droplet is a clear lens: material only, no blur.
+   * BUILD 9 — the library's effect order: BLUR FIRST, material
+   * SECOND (createChainEffect(material, blur) =
+   * material(blur(source))). The material shader samples the
+   * LIGHTLY-FROSTED backdrop, exactly as the library's shader
+   * requires. Build 6's material-first order (createChainEffect
+   * (blur, material)) was a theoretical swap that was never
+   * validated on device in isolation, and it is the one structural
+   * difference between our bar path and the library's working
+   * path — so it goes. The droplet at rest gets the same blur as
+   * the bar; while held its blur animates to 0 (material only).
    */
   private fun buildEffect(shader: RuntimeShader, w: Int, h: Int): RenderEffect? {
     val density = resources.displayMetrics.density
     shader.setFloatUniform("resolution", w.toFloat(), h.toFloat())
     shader.setFloatUniform("density", density)
     shader.setFloatUniform("outset", OUTSET_DP * density)
-    if (mode == "droplet") {
-      shader.setFloatUniform("magnification", magnification)
-    } else {
-      shader.setFloatUniform("glowStrength", glowStrength)
-      // Build 8 DIAGNOSTIC: multiplies the coherent displacement.
-      // Default 1.0 (shipped look); 3.0 only when bendDiagnostic
-      // is ON, so the device check can see whether ANY bend
-      // reaches the screen at all.
-      shader.setFloatUniform("bendScale", bendScale)
-      shader.setFloatUniform("tintMix", tintMix)
-      shader.setFloatUniform("tintColor", tintColor[0], tintColor[1], tintColor[2])
-    }
+    shader.setFloatUniform("glowStrength", glowStrength)
+    // Build 8 DIAGNOSTIC, kept: the bar's coherent displacement
+    // scales by bendScale (1.0 shipped, 3.0 diagnostic). The
+    // droplet always runs at 1.0.
+    shader.setFloatUniform("bendScale", if (mode == "droplet") 1f else bendScale)
+    shader.setFloatUniform("tintMix", tintMix)
+    shader.setFloatUniform("tintColor", tintColor[0], tintColor[1], tintColor[2])
+    // BUILD 9: the library-port lens strength, in px.
+    shader.setFloatUniform("iLens", LENS_DP * density)
+    // BUILD 9: uniform centre magnification. The bar never zooms
+    // (1.0). The droplet is 1.0 at rest — NO magnification at all,
+    // same glass as the bar — and eases to M while held.
+    val mag = if (mode == "droplet") 1f + (magnification - 1f) * heldAnim else 1f
+    shader.setFloatUniform("magnification", mag)
     return try {
       val material = RenderEffect.createRuntimeShaderEffect(shader, "backdrop")
-      if (mode == "droplet") return material
-      val blurPx = (blurRadiusDp * density).coerceAtLeast(0f)
+      // Effective blur: the bar always blurs; the droplet blurs
+      // at rest and animates to 0 while held (refraction stays).
+      val blurDp = if (mode == "droplet") blurRadiusDp * (1f - heldAnim) else blurRadiusDp
+      val blurPx = (blurDp * density).coerceAtLeast(0f)
       if (blurPx <= 0f) return material
       val blur = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP)
-      // Outer = blur, inner = material: blur(material(source)).
-      RenderEffect.createChainEffect(blur, material)
+      // Outer = material, inner = blur: material(blur(source)).
+      RenderEffect.createChainEffect(material, blur)
     } catch (t: Throwable) {
       Log.w(TAG, "RenderEffect failed (${t.javaClass.simpleName}); drawing un-blurred", t)
       null
@@ -593,156 +740,218 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   }
 }
 
-// The bar shader is adapted from GlassBarShader.kt in Anivio
-// (https://github.com/mdtahseen7/Anivio), licensed under GPL-3.0.
-// The changes from Anivio's original are:
-// - the `tintMix` uniform (build 7: 0.10, the clear-glass fill)
-//   replacing the hardcoded 0.55 in the surface mix;
-// - the `tintColor` uniform, so the tint follows the navbar mode
-//   (dark #1C1C1E / white) instead of always being dark;
-// - the BEND (build 6, ported from the v3 simulation,
-//   ~/workspace/shader-test/test_real_photo_v3.py): Anivio fringed
-//   R/G/B by different amounts (16/62/57dp) and nothing else — a
-//   colour fringe on an already-blurred image, invisible at phone
-//   scale. The v3 bend displaces ALL channels TOGETHER by
-//   56dp * bend * bendScale along -normal, over a 24dp band, with
-//   a 6dp tangent spread, and the displaced sample is the rim
-//   band's base colour (mixed in by `bend`), not only the sheen.
-//   `bendScale` is the build 8 DIAGNOSTIC multiplier (default 1.0;
-//   3.0 only when the bendDiagnostic setting is ON). A rock
-//   or a line of text visibly SHIFTS as it crosses the rim. A
-//   small +/-4dp chromatic fringe rides on top of the coherent
-//   shift as a glass cue. The chain now blurs AFTER this shader,
-//   so the shift survives the blur.
+// BUILD 9 — ONE unified glass shader for the bar and the droplet,
+// porting the displacement model of react-native-liquid-
+// glassmorphism (the library the Pioneer Gym live app used before
+// its glass navbar was scrapped on 27 Oct 2026; the gym navbar ran
+// variant="clear", thickness=0.75, blurRadius=3, iridescence=0,
+// edgeReflectionStrength=0.35, legibilityFloor=0.4, interactive).
+// The library's AGSL is GLASS_AGSL in LiquidGlassmorphismView.kt;
+// the prop-to-number mapping is GlassParams.kt in the same
+// directory. The port, term by term:
+//
+//   - lensW = max(28px, iCorner * 1.4); reflW = max(14px,
+//     minDim * 0.35). rim = 1 - clamp(-d / lensW, 0, 1), 0 in the
+//     interior, 1 at the edge. (iCorner here is the capsule
+//     radius, in px; minDim is the smaller half-extent, so
+//     min(b.x, b.y) * 0.7 in the library's half-size terms.)
+//   - bend = rim * rim * axisFade, where axisFade =
+//     smoothstep(0.15, 0.8, conf) eases the lens off toward the
+//     medial axis so the top and bottom rings do not collide into
+//     a seam. conf comes from a WIDE-epsilon central difference
+//     of the SDF (e = clamp(lensW * 0.3, 1, 16)px), as the
+//     library does — a 1px epsilon makes conf a 1px notch, which
+//     turns the fade into the very seam it exists to prevent.
+//     The normal DIRECTION itself is the exact analytic capsule
+//     normal (identical to the SDF gradient away from the axis);
+//     only conf needs the sampled gradient.
+//   - disp = n2 * bend * iLens * edgeGuard, ONE coherent
+//     displacement along the surface normal for ALL channels.
+//     iLens = 14.85dp * thickness = ~11dp at thickness 0.75.
+//     edgeGuard = smoothstep(0, max(12, reflW * 0.18), -d)
+//     tapers refraction to zero at the outermost pixels.
+//   - reflDisp = n2 * reflMask * (iLens * 3.0 * iRefl) *
+//     edgeGuard, reflMask = edgeBand * edgeBand * axisFade,
+//     iRefl = 0.35. Broad and soft, not a thin streak.
+//   - Chromatic dispersion: DELETED ENTIRELY (ca = 0). The
+//     library's ca is n2 * bend * iLens * 0.018 (~0.2dp,
+//     essentially invisible) and the gym ran iridescence=0.
+//     The Anivio per-channel split (red 16dp / green 62dp /
+//     blue 57dp) is gone — that split IS the rainbow Haziq sees,
+//     and because it displaces channels differently with no
+//     coherent component, it can never bend anything. One sample,
+//     all channels, clamped to the node bounds as the library does.
+//   - Uniform centre magnification (droplet hold zoom only):
+//     magBase = centre + (coord - centre) / magnification,
+//     applied BEFORE the edge displacement, so the lens still
+//     bends whatever the magnified surface is showing. One scale
+//     factor about the centre: a plain zoomed-in image, no
+//     fisheye, no per-channel split. The library's radial
+//     touch-magnifier warp (magCoord) is NOT used — it is a
+//     radial warp, not a uniform zoom. magnification = 1.0 is a
+//     no-op (bar always, droplet at rest).
+//   - Blur stays 3dp, tintMix 0.10, veil 0.02 (do not touch).
+//     The library's clear-variant numbers (frost floor 0,
+//     adaptive lift 0.03, tint ~4.7% white) agree with our
+//     clarity; nothing is re-tuned.
+//   - The sheen / highlight lighting terms are UNCHANGED in
+//     shape (narrow exp rim, top-weighted): they are part of the
+//     rim look Haziq confirmed perfect on build 8, so they keep
+//     their own rim mask and do not follow the new wide
+//     displacement rim. Only the DISPLACEMENT was criticised;
+//     only the displacement changes.
+//   - `bendScale` is the build 8 DIAGNOSTIC multiplier (default
+//     1.0; 3.0 only when the bendDiagnostic setting is ON). It
+//     scales the coherent displacement AND the mirror band, so
+//     the device check can see whether ANY refraction reaches
+//     the screen. If 3x shows nothing, the displacement path is
+//     dead on device; if 3x shows, 1.0 is below visibility.
+//     Never the shipped look.
 //
 // `backdrop` here is the captured bitmap drawn into the RenderNode:
 // real backdrop pixels. It is NOT the view's own (empty) drawing —
 // that was the builds 1-3 mistake.
-private const val BAR_SHADER_SOURCE = """
+private const val GLASS_SHADER_SOURCE = """
 uniform shader backdrop;
 uniform float2 resolution;
 uniform float density;
 uniform float outset;
 uniform float glowStrength;
-// BUILD 8 DIAGNOSTIC: multiplies the coherent displacement
-// (56dp * bend * bendScale). Default 1.0 = the shipped look.
-// 3.0 only when the bendDiagnostic setting is ON, to prove on
-// device whether ANY displacement reaches the screen. If 3x
-// shows nothing, the displacement path is dead on device; if 3x
-// shows, 1.0 is below visibility. Never the shipped look.
+// BUILD 8 DIAGNOSTIC: multiplies the coherent displacement and
+// the mirror band (iLens * bend * bendScale). Default 1.0 = the
+// shipped look. 3.0 only when the bendDiagnostic setting is ON,
+// to prove on device whether ANY displacement reaches the screen.
+// If 3x shows nothing, the displacement path is dead on device;
+// if 3x shows, 1.0 is below visibility. Never the shipped look.
 uniform float bendScale;
 uniform float tintMix;
 uniform half3 tintColor;
-
-half3 sampleLight(float2 position, float2 tangent) {
-    float2 spread = tangent * density * 6.0;
-    return backdrop.eval(position).rgb * 0.5
-        + backdrop.eval(position - spread).rgb * 0.25
-        + backdrop.eval(position + spread).rgb * 0.25;
-}
-
-half4 main(float2 position) {
-    float2 halfSize = resolution * 0.5 - outset;
-    float radius = halfSize.y;
-    float2 local = position - resolution * 0.5;
-    float2 capsule = float2(max(abs(local.x) - halfSize.x + radius, 0.0), local.y);
-    float distanceToCenter = length(capsule);
-    float distanceToEdge = distanceToCenter - radius;
-    float coverage = 1.0 - smoothstep(-0.5, 0.5, distanceToEdge);
-    if (coverage <= 0.0) return half4(0.0);
-    float2 normal = float2(capsule.x * sign(local.x), capsule.y) / max(distanceToCenter, 0.001);
-    float2 tangent = float2(-normal.y, normal.x);
-    float depth = max(-distanceToEdge, 0.0) / density;
-    half3 surface = mix(backdrop.eval(position).rgb, tintColor, tintMix);
-    if (depth >= 24.0 || glowStrength <= 0.0) return half4(surface * coverage, coverage);
-    float rim = exp(-0.0565 * depth - 0.0322 * depth * depth);
-    float upperLight = 0.18 + 0.82 * pow(max(-normal.y, 0.0), 0.65);
-    float bend = pow(rim, 0.18);
-    // COHERENT bend (v3): every channel displaced TOGETHER by the
-    // same vector, 56dp * bend * bendScale along -normal (inward).
-    // At the rim bend is 1, so a feature shifts up to 56dp at
-    // bendScale 1 (168dp at the 3x diagnostic); at 24dp in, bend
-    // is ~0 and the sample is undisplaced. Small chromatic fringe
-    // on top: red pulled 4dp further in, blue 4dp less. The 4dp
-    // fringe is NOT scaled — it is a glass cue, not the
-    // displacement under test.
-    float bendDp = 56.0 * bend * bendScale;
-    half3 refracted = sampleLight(position - normal * density * bendDp, tangent);
-    half3 redLight = sampleLight(position - normal * density * (bendDp + 4.0), tangent);
-    half3 blueLight = sampleLight(position - normal * density * (bendDp - 4.0), tangent);
-    refracted = half3(redLight.r, refracted.g, blueLight.b);
-    half luminance = dot(refracted, half3(0.2126, 0.7152, 0.0722));
-    refracted = clamp(mix(half3(luminance), refracted, 1.25), 0.0, 1.0);
-    // The rim band's base colour IS the bent sample, mixed in by
-    // `bend` — builds 4-5 kept the undisplaced sample as the base
-    // and let the bend only tint the sheen, so nothing ever moved.
-    half3 displacedSurface = mix(refracted, tintColor, tintMix);
-    surface = mix(surface, displacedSurface, bend);
-    half3 sheen = half3(0.1735, 0.0529, 0.0184) + refracted * half3(0.0953, 0.3152, 0.3822);
-    half3 color = surface + sheen * rim * upperLight * glowStrength;
-    float highlight = exp(-pow((depth - 0.35) / 0.42, 2.0));
-    float highlightLight = 0.12 + 0.88 * sqrt(max((1.0 - normal.y) * 0.5, 0.0));
-    color += half3(0.25) * highlight * highlightLight * glowStrength;
-    return half4(clamp(color, 0.0, 1.0) * coverage, coverage);
-}
-"""
-
-// Haziq's droplet: a completely transparent, refractive lens. No
-// tint, no blur, no fill, no chromatic dispersion. The shader only
-// bends the live backdrop, magnifying what sits behind the droplet
-// (the icon under it) without scaling any view. The magnification
-// is zero at the exact centre of the lens and increases toward the
-// rim, so the icon sitting exactly in the middle reads clean.
-//
-// BUILD 6: a thin bright LENS RIM within ~2dp of the capsule edge
-// (white, stronger at the top, fading toward the bottom) plus a
-// very subtle dark ring just inside it (depth ~3dp). Builds 4-5
-// had no rim at all, so over a featureless gradient the lens was
-// just a pale disc with no edge to read as glass. Magnification
-// default is 1.35 (was 1.25).
-//
-// This shader is original work written for this navbar. It is NOT
-// Anivio's shader.
-private const val DROPLET_SHADER_SOURCE = """
-uniform shader backdrop;
-uniform float2 resolution;
-uniform float density;
-uniform float outset;
+// BUILD 9: the library-port lens strength, in px
+// (14.85dp * thickness 0.75 = ~11dp, times density).
+uniform float iLens;
+// BUILD 9: uniform centre magnification. 1.0 = no zoom (the bar
+// always, the droplet at rest). While the droplet is held this
+// eases to M: one scale factor about the droplet centre, a plain
+// zoomed-in image, no fisheye. Applied BEFORE the edge
+// displacement, so the lens still bends the magnified surface.
 uniform float magnification;
 
+float sdCapsule(float2 p, float2 halfSize, float radius) {
+    float2 q = float2(max(abs(p.x) - halfSize.x + radius, 0.0), p.y);
+    return length(q) - radius;
+}
+
 half4 main(float2 position) {
-    // Capsule SDF: the lens is a pill the size of the droplet frame.
-    // `outset` insets the capsule 24dp inside this view's bounds.
-    float2 halfSize = resolution * 0.5 - outset;
+    float2 b = resolution * 0.5;
+    float2 local = position - b;
+    float2 halfSize = b - outset;
     float radius = halfSize.y;
-    float2 local = position - resolution * 0.5;
-    float2 capsule = float2(max(abs(local.x) - halfSize.x + radius, 0.0), local.y);
-    float distanceToCenter = length(capsule);
-    float distanceToEdge = distanceToCenter - radius;
-    float coverage = 1.0 - smoothstep(-0.5, 0.5, distanceToEdge);
+    float d = sdCapsule(local, halfSize, radius);
+    float coverage = 1.0 - smoothstep(-0.5, 0.5, d);
     if (coverage <= 0.0) return half4(0.0);
-    float2 normal = float2(capsule.x * sign(local.x), capsule.y) / max(distanceToCenter, 0.001);
-    float depth = max(-distanceToEdge, 0.0) / density;
 
-    // Magnifying lens. The sample point is pulled toward the centre:
-    // at the exact centre local is (0,0), so the sample equals the
-    // position and the displacement is ZERO — the middle icon reads
-    // clean. Toward the rim the pull grows, so the bend and the
-    // magnification increase toward the edge of the lens.
-    float r = length(local) / max(radius, 0.001);
-    float mag = 1.0 + (magnification - 1.0) * smoothstep(0.0, 1.0, r);
-    float2 samplePos = resolution * 0.5 + local / mag;
-    half3 color = backdrop.eval(samplePos).rgb;
+    // Analytic surface normal (exact for a distance field, away
+    // from the medial axis): the capsule vector, normalised.
+    float2 capQ = float2(max(abs(local.x) - halfSize.x + radius, 0.0), local.y);
+    float distC = length(capQ);
+    float2 n2 = float2(capQ.x * sign(local.x), capQ.y) / max(distC, 0.001);
 
-    // Lens rim: a thin bright specular ring right at the edge
-    // (depth 0 -> 2dp), stronger at the top of the lens and fading
-    // toward the bottom, so the circle reads as a LENS with an
-    // edge instead of a flat disc. Just inside it, a faint dark
-    // ring (peaking at ~3dp in) gives the rim something to sit on.
-    float rimBand = 1.0 - smoothstep(0.0, 2.0, depth);
-    float topLight = 0.35 + 0.65 * pow(max(-normal.y, 0.0), 0.65);
-    color += half3(1.0) * rimBand * topLight * 0.55;
-    color -= half3(0.10) * exp(-pow((depth - 3.0) / 1.5, 2.0));
+    // Library-port displacement bands. lensW is the wide linear
+    // rim band (~45dp on our 64dp bar); reflW the broad mirror
+    // band. rim is 0 in the interior, 1 at the edge — the centre
+    // stays nearly undistorted, the bend happens at the edges
+    // and corners, exactly as the iPhone Control Center reference
+    // shows.
+    float lensW = max(28.0, radius * 1.4);
+    float reflW = max(14.0, min(halfSize.x, halfSize.y) * 0.7);
+    float rim = 1.0 - clamp(-d / lensW, 0.0, 1.0);
+    float edgeBand = 1.0 - clamp(-d / reflW, 0.0, 1.0);
+
+    // Medial-axis confidence, library method: the SDF gradient
+    // collapses along the shape's medial axis (the ridge
+    // equidistant from two edges), where the top and bottom lens
+    // rings meet and the normal flips. Sampled over a WIDE
+    // epsilon (the scale of the lens ring), conf varies smoothly
+    // across the ridge instead of stepping 1 -> 0 -> 1 within
+    // two pixels, so axisFade eases the lens off toward the
+    // ridge instead of cutting a hard seam across the middle
+    // of the pill.
+    float e = clamp(lensW * 0.3, 1.0, 16.0);
+    float gx = sdCapsule(local + float2(e, 0.0), halfSize, radius)
+             - sdCapsule(local - float2(e, 0.0), halfSize, radius);
+    float gy = sdCapsule(local + float2(0.0, e), halfSize, radius)
+             - sdCapsule(local - float2(0.0, e), halfSize, radius);
+    float conf = length(float2(gx, gy)) / (2.0 * e);
+    float axisFade = smoothstep(0.15, 0.8, conf);
+
+    // Lens profile: almost all the refraction happens in the
+    // outer ring — the centre stays clear. bend is a steep power
+    // of rim, so the displacement is strongest at the very edge.
+    float bend = rim * rim * axisFade;
+    // Edge guard: taper ALL refraction to zero across the
+    // outermost few px, where the displacement peaks and would
+    // otherwise magnify residual normal noise into radial
+    // hairlines. The lens band just inside is untouched.
+    float edgeGuard = smoothstep(0.0, max(12.0, reflW * 0.18), -d);
+    // Edge reflection: a lens band at the rim that folds the
+    // sample back on itself, so content near the edge appears
+    // mirrored — the inverted echo iOS shows at the top and
+    // bottom of a glass pill. Broad and soft (the outer third
+    // of the surface each side), not a thin streak.
+    float reflMask = edgeBand * edgeBand * axisFade;
+    // The refraction-strength setting gates BOTH bands (0 = no
+    // bend at all, as in builds 6-8); the uniform zoom below is
+    // independent of it.
+    float bendGate = glowStrength <= 0.0 ? 0.0 : 1.0;
+    float2 reflDisp = n2 * reflMask * (iLens * 3.0 * 0.35) * edgeGuard * bendScale * bendGate;
+    // Refraction: ONE coherent displacement along the surface
+    // normal for ALL channels. iLens is the edge displacement
+    // in px (~11dp).
+    float2 disp = n2 * bend * iLens * edgeGuard * bendScale * bendGate;
+
+    // Uniform centre magnification (droplet hold zoom only).
+    // magnification == 1.0 is a no-op: the sample is the pixel
+    // itself. Above 1.0 the sample is pulled toward the centre
+    // by ONE factor everywhere — a plain zoom, no fisheye.
+    float2 magBase = magnification == 1.0 ? position : b + (position - b) / magnification;
+    float2 uv = magBase - disp - reflDisp;
+    // NO chromatic split (ca = 0): one coherent sample for all
+    // channels, clamped to the node bounds as the library does.
+    // The Anivio per-channel split (16/62/57dp) that made the
+    // rainbow is deleted.
+    half3 refracted = backdrop.eval(clamp(uv, float2(0.0), resolution - 1.0)).rgb;
+
+    // The rim band's base colour IS the bent sample, mixed in by
+    // `bend` — builds 4-5 kept the undisplaced sample as the
+    // base and let the bend only tint the sheen, so nothing ever
+    // moved. The interior (bend 0) keeps the base sample. BOTH
+    // samples start from magBase, not from the raw position: the
+    // uniform hold zoom must apply to the WHOLE lens content,
+    // not only to the rim band — sampling the base at `position`
+    // would leave the interior unzoomed (bend ~ 0 there) and the
+    // hold magnification would vanish exactly where the icon
+    // sits. With magnification 1.0 (the bar always, the droplet
+    // at rest) magBase IS the position, so this changes nothing
+    // there.
+    half3 surface = mix(backdrop.eval(magBase).rgb, tintColor, tintMix);
+    half3 displacedSurface = mix(refracted, tintColor, tintMix);
+    surface = mix(surface, displacedSurface, bend);
+
+    // Vibrancy — glass over-saturates what it transmits.
+    half luminance = dot(refracted, half3(0.2126, 0.7152, 0.0722));
+    half3 vib = clamp(mix(half3(luminance), refracted, 1.25), 0.0, 1.0);
+
+    // Sheen + highlight — UNCHANGED from builds 6-8 (narrow exp
+    // rim, top-weighted). Part of the rim look Haziq confirmed
+    // perfect; kept on its own rim mask, not the new wide band.
+    float depth = max(-d, 0.0) / density;
+    float sheenRim = exp(-0.0565 * depth - 0.0322 * depth * depth);
+    float upperLight = 0.18 + 0.82 * pow(max(-n2.y, 0.0), 0.65);
+    half3 sheen = half3(0.1735, 0.0529, 0.0184) + vib * half3(0.0953, 0.3152, 0.3822);
+    half3 color = surface + sheen * sheenRim * upperLight * glowStrength;
+    float highlight = exp(-pow((depth - 0.35) / 0.42, 2.0));
+    float highlightLight = 0.12 + 0.88 * sqrt(max((1.0 - n2.y) * 0.5, 0.0));
+    color += half3(0.25) * highlight * highlightLight * glowStrength;
     return half4(clamp(color, 0.0, 1.0) * coverage, coverage);
 }
 """
