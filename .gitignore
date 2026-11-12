@@ -18,3 +18,9 @@ dist/
 
 # logs
 *.log
+
+# Working record + local emulator scratch: kept on disk, never in
+# the repo. The notes file is appended to across builds; screenshots/
+# holds local emulator setup and captures.
+LIQUID_GLASS_NOTES.md
+screenshots/
