@@ -116,14 +116,17 @@ export const GlassView = requireNativeViewManager<GlassViewProps>(
 
 // BUILD 6 verification aid. The native glass state as a two-line
 // string, for the on-screen debug readout in the DemoScreen:
-//   "cap 540x1200 | nav Y hid Y | drawn bar Y drop Y (bar)
+//   "cap 540x1200 barcap 540x72 | nav Y hid Y | drawn bar Y drop Y (bar)
 //    hash 1a2b3c4d | rect 24,890,372,1012"
-// cap = shared backdrop bitmap size; nav = a navbar root was found;
-// hid = it was actually hidden during the last capture; drawn bar /
-// drop = the RenderEffect path drew at least once, PER MODE (build
-// 9: the old single flag reported only the last mode drawn, so the
-// bar's own status was never separately proven); hash/rect = the
-// last backdrop hash and this view's rectangle in the bitmap.
+// cap = shared backdrop bitmap size; barcap = BUILD 12 second strip
+// bitmap size (bar-included, droplet hold only; "—" at rest, which
+// is expected — the second capture is skipped entirely until held);
+// nav = a navbar root was found; hid = it was actually hidden during
+// the last capture; drawn bar / drop = the RenderEffect path drew at
+// least once, PER MODE (build 9: the old single flag reported only
+// the last mode drawn, so the bar's own status was never separately
+// proven); hash/rect = the last backdrop hash and this view's
+// rectangle in the bitmap.
 // REMOVE before final delivery, with the readout and GlassDebugState.
 const GlassModule = requireNativeModule<{
   getGlassDebug: () => Promise<string>;

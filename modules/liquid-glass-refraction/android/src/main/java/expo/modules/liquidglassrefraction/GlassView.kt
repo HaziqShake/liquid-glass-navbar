@@ -139,6 +139,15 @@
 //   - BUILD 11: capture only the STRIP behind the glass (the union
 //     of the glass rects + 16dp margin), never the full root — the
 //     full-root capture was the biggest lag source.
+//   - BUILD 12: a SECOND strip, captured with the navbar visible
+//     and only the droplet subtree hidden, which the droplet samples
+//     on hold (mixed in by heldAnim) so the held droplet shows the
+//     navbar magnified. Captured only while held; at rest it is
+//     skipped entirely. HONEST LIMIT: the bar's own live glass is
+//     not in that strip (a hardware RenderNode cannot draw into the
+//     software capture canvas), so it carries the veil, edge light,
+//     icons and labels over the UNBENT photo, and the droplet's own
+//     rim bend + chain blur apply on top.
 //   - Capture only in onPreDraw, only while the view is shown.
 //   - The bitmap is freed when the last glass view unmounts.
 //   - The shader runs only over the pill areas (this view's rect),
@@ -163,8 +172,10 @@ package expo.modules.liquidglassrefraction
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RenderEffect
@@ -195,6 +206,7 @@ import expo.modules.kotlin.AppContext
  */
 internal object GlassDebugState {
   @Volatile var bitmapSize = "—"
+  @Volatile var barBitmapSize = "—"
   @Volatile var navbarFound = false
   @Volatile var navbarHidden = false
   @Volatile var effectDrawnBar = false
@@ -208,7 +220,7 @@ internal object GlassDebugState {
     val hid = if (navbarHidden) "Y" else "N"
     val bar = if (effectDrawnBar) "Y" else "N"
     val drop = if (effectDrawnDroplet) "Y" else "N"
-    return "cap $bitmapSize | nav $nav hid $hid | drawn bar $bar drop $drop ($lastMode)\n" +
+    return "cap $bitmapSize barcap $barBitmapSize | nav $nav hid $hid | drawn bar $bar drop $drop ($lastMode)\n" +
       "hash $lastHash | rect $lastRect"
   }
 }
@@ -333,6 +345,10 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   private var lastHiddenNavbar: View? = null
   private var lastHiddenSize = ""
   private var navbarMissingLogged = false
+  // BUILD 12: logged once if the droplet frame cannot be found for
+  // the bar-included capture (the droplet then falls back to the
+  // background-only bitmap — the old behaviour, never a crash).
+  private var dropletFrameMissingLogged = false
 
   private val fallbackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
   private val srcRect = Rect()
@@ -491,6 +507,41 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     if (failure != null) {
       Log.w(TAG, "backdrop capture failed (${failure.javaClass.simpleName}); reusing last frame")
     }
+    // BUILD 12 — BAR-INCLUDED CAPTURE (droplet only, only while
+    // held). The droplet glass samples a background-only bitmap, so
+    // on hold it could only ever show the photo and the re-rendered
+    // icon — never the bar. This second strip capture leaves the
+    // navbar VISIBLE and hides only the droplet subtree (the frame
+    // found by findDropletFrame), so the droplet shader can mix
+    // background-only -> bar-included by heldAnim and show the
+    // navbar magnified on hold. At rest (heldAnim == 0) it is
+    // skipped entirely — one extra software draw of the same strip
+    // per frame, only while held. heldAnim lags onDraw by a frame,
+    // which is fine: the mix is ~0 until the capture has run.
+    // HONEST LIMIT: the bar's own live glass is NOT in this bitmap
+    // — a hardware RenderNode cannot draw into the software capture
+    // canvas, and every glass view skips drawing during any capture
+    // — so it carries the veil, edge light, icons and labels over
+    // the UNBENT photo, and the droplet's own rim bend + chain blur
+    // apply on top of that.
+    if (mode == "droplet" && heldAnim > 0f) {
+      val dropletFrame = findDropletFrame()
+      if (dropletFrame != null) {
+        val frameWasVisible = dropletFrame.visibility
+        val barFailure = try {
+          dropletFrame.visibility = View.INVISIBLE
+          cap.captureBarStripIfNeeded(root, root.drawingTime)
+        } finally {
+          dropletFrame.visibility = frameWasVisible
+        }
+        if (barFailure != null) {
+          Log.w(TAG, "bar capture failed (${barFailure.javaClass.simpleName}); reusing last frame")
+        }
+      } else if (!dropletFrameMissingLogged) {
+        dropletFrameMissingLogged = true
+        Log.w(TAG, "bar capture: droplet frame NOT FOUND, droplet falls back to the background-only bitmap")
+      }
+    }
     // Only repaint when the backdrop under THIS view actually
     // changed, or when THIS view moved/resized. Comparing a cheap
     // sampled hash breaks the old self-sustaining 60fps capture ->
@@ -509,7 +560,14 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
         lastRectValid = true
       }
     }
-    val hash = backdropHash()
+    // BUILD 12: while held the droplet also samples the bar-
+    // included bitmap, so its hash joins the dirty check — a bar
+    // change (veil, icons, shrink) that leaves the background-only
+    // bitmap untouched must still repaint the held droplet.
+    var hash = backdropHash()
+    if (mode == "droplet" && heldAnim > 0f) {
+      hash = hash * 31 + backdropHash(shared?.barBitmap, shared?.barBitmapOriginY() ?: 0)
+    }
     // Build 6 debug: publish the native state so the on-screen
     // readout can show it. navbarHidden is true only when a root
     // was actually found AND set INVISIBLE for this capture; if
@@ -518,6 +576,9 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     val bmpNow = shared?.bitmap
     GlassDebugState.bitmapSize =
       if (bmpNow != null) "${bmpNow.width}x${bmpNow.height}" else "—"
+    val barBmpNow = shared?.barBitmap
+    GlassDebugState.barBitmapSize =
+      if (barBmpNow != null) "${barBmpNow.width}x${barBmpNow.height}" else "—"
     GlassDebugState.navbarFound = navbarRoot != null
     GlassDebugState.navbarHidden = navbarRoot != null
     GlassDebugState.lastHash = "%08x".format(hash)
@@ -571,14 +632,55 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   }
 
   /**
+   * BUILD 12: find the droplet frame — the ancestor of this (droplet)
+   * view that holds the glass wrapper — so the bar-included capture
+   * can hide the droplet subtree while leaving the navbar visible.
+   * Identified by SIZE, not by level-counting: this view is
+   * absoluteFill inside its wrapper, so the wrapper is exactly this
+   * view's size and the frame is exactly this view's size minus
+   * 48dp (OUTSET_DP on every side). The first ancestor whose size
+   * matches (width - 48dp, height - 48dp) within 2px IS the frame:
+   * the wrapper is 48dp bigger, the overlay is bar-sized, and
+   * nothing else in the chain has that size. Re-walked on every
+   * held frame (a handful of ancestors); if the tree ever changes
+   * shape the walk simply finds nothing and the droplet falls back
+   * to the background-only bitmap.
+   */
+  private fun findDropletFrame(): View? {
+    val density = resources.displayMetrics.density
+    val frameW = width - (OUTSET_DP * 2f * density)
+    val frameH = height - (OUTSET_DP * 2f * density)
+    var node = parent as? View
+    while (node != null) {
+      if (kotlin.math.abs(node.width - frameW) <= 2f &&
+        kotlin.math.abs(node.height - frameH) <= 2f
+      ) {
+        return node
+      }
+      node = node.parent as? View
+    }
+    return null
+  }
+
+  /**
    * A cheap sampled hash of THIS view's rectangle of the shared
    * backdrop. Deliberately not a hash of the whole bitmap: that
    * would repaint every glass view whenever anything anywhere
    * moved, throwing away the per-view dirty detection.
    */
   private fun backdropHash(): Int {
-    val bmp = shared?.bitmap ?: return 0
-    if (!viewRectInBitmap(bmp, hashRect)) return 0
+    return backdropHash(shared?.bitmap, shared?.bitmapOriginY() ?: 0)
+  }
+
+  /**
+   * BUILD 12: the same sampled hash over a given bitmap (the bar-
+   * included strip while held). The origin is that bitmap's own
+   * strip top — same value as the bg strip's in practice, read
+   * separately for correctness.
+   */
+  private fun backdropHash(bmp: Bitmap?, originY: Int): Int {
+    if (bmp == null) return 0
+    if (!viewRectInBitmap(bmp, hashRect, originY)) return 0
     var hash = 1
     val cols = 6
     val rows = 5
@@ -617,13 +719,15 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
    * it (bitmapOriginY), so the rect lands on the same pixels it
    * would have in a full-root bitmap and the bend is unchanged.
    */
-  private fun viewRectInBitmap(bmp: Bitmap, out: Rect): Boolean {
+  private fun viewRectInBitmap(bmp: Bitmap, out: Rect, originY: Int? = null): Boolean {
     val root = rootView ?: return false
     getLocationInWindow(locThis)
     root.getLocationInWindow(locRoot)
-    val originY = shared?.bitmapOriginY() ?: 0
+    // BUILD 12: the origin is the bitmap's own strip top — the bg
+    // strip's by default, the bar strip's when the caller passes it.
+    val origin = originY ?: (shared?.bitmapOriginY() ?: 0)
     val left = (locThis[0] - locRoot[0]) / CAPTURE_SCALE
-    val top = (locThis[1] - locRoot[1] - originY) / CAPTURE_SCALE
+    val top = (locThis[1] - locRoot[1] - origin) / CAPTURE_SCALE
     val right = left + width / CAPTURE_SCALE
     val bottom = top + height / CAPTURE_SCALE
     if (right <= 0 || bottom <= 0 || left >= bmp.width || top >= bmp.height) return false
@@ -678,13 +782,33 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     val node = effectNode
     val shader = shaderForMode()
     if (bmp != null && !bmp.isRecycled && node != null && shader != null) {
+      // BUILD 12: WHICH STRIP THE NODE HOLDS. Only the node's
+      // recorded content gets the chain blur — a BitmapShader input
+      // is sampled raw. So while the droplet is held past the
+      // midpoint of the hold ramp (heldAnim >= 0.5) the node records
+      // the BAR strip instead of the background-only strip, and the
+      // background strip becomes the mix partner (see buildEffect):
+      // at the settled hold state the bar image is chain-blurred
+      // exactly like the background is at rest, and the droplet
+      // does not sharpen on hold. Before the midpoint the node
+      // still holds the background strip; the switch is mid-blend
+      // (barMix ~ 0.5), so the one-frame blur step is halved. If
+      // the bar strip is missing, the node stays on the background
+      // strip (the old behaviour, blurred as before).
+      val barBmp = shared?.barBitmap
+      val useBarNode = mode == "droplet" && heldAnim >= 0.5f &&
+        barBmp != null && !barBmp.isRecycled
+      val contentBmp = if (useBarNode) barBmp else bmp
       node.setPosition(0, 0, w, h)
       val rec = node.beginRecording()
-      if (!viewRectInBitmap(bmp, srcRect)) srcRect.set(0, 0, bmp.width, bmp.height)
+      val contentOrigin = if (useBarNode) shared?.barBitmapOriginY() else null
+      if (!viewRectInBitmap(contentBmp, srcRect, contentOrigin)) {
+        srcRect.set(0, 0, contentBmp.width, contentBmp.height)
+      }
       dstRect.set(0, 0, w, h)
-      rec.drawBitmap(bmp, srcRect, dstRect, null)
+      rec.drawBitmap(contentBmp, srcRect, dstRect, null)
       node.endRecording()
-      node.setRenderEffect(buildEffect(shader, w, h))
+      node.setRenderEffect(buildEffect(shader, w, h, srcRect, useBarNode))
       canvas.drawRenderNode(node)
       // Build 9 debug: the effect really drew, PER MODE. The old
       // single flag reported the last mode drawn, so the bar's own
@@ -749,7 +873,34 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
    * as the bar at rest AND on hold (holding no longer drops its
    * blur to 0); only its magnification animates.
    */
-  private fun buildEffect(shader: RuntimeShader, w: Int, h: Int): RenderEffect? {
+  /**
+   * BUILD 12 — the droplet's bar-included backdrop. `srcRect` is
+   * this view's rectangle inside the shared strip bitmap (already
+   * computed by onDraw); the bar bitmap shares the strip, so the
+   * same rect maps it. `barMix` is heldAnim for the droplet (0 at
+   * rest — pixel-identical to today, the bar samples mix out
+   * exactly) and 0 for the bar. `useBarNode` (see onDraw) says the
+   * node holds the BAR strip: then `backdrop` is the blurred bar
+   * image and the input shader is the background strip; otherwise
+   * `backdrop` is the blurred background and the input is the bar
+   * strip. nodeIsBar tells the shader which side of the mix each
+   * input is on, so the mix is always background -> bar. The bar
+   * bitmap is passed as a BitmapShader input with a local matrix
+   * mapping node coords to bitmap coords: the node records
+   * drawBitmap(bmp, srcRect, dstRect(0,0,w,h)), so bitmapX =
+   * srcRect.left + nodeX / CAPTURE_SCALE. If no bar bitmap exists
+   * yet (first held frames, or the droplet frame was not found)
+   * barMix is forced to 0 and the bg bitmap stands in as the input,
+   * so the shader never samples an unset uniform and the droplet
+   * falls back to the background-only bitmap, blurred, as before.
+   */
+  private fun buildEffect(
+    shader: RuntimeShader,
+    w: Int,
+    h: Int,
+    srcRect: Rect,
+    useBarNode: Boolean,
+  ): RenderEffect? {
     val density = resources.displayMetrics.density
     shader.setFloatUniform("resolution", w.toFloat(), h.toFloat())
     shader.setFloatUniform("density", density)
@@ -768,6 +919,31 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     // same glass as the bar — and eases to M while held.
     val mag = if (mode == "droplet") 1f + (magnification - 1f) * heldAnim else 1f
     shader.setFloatUniform("magnification", mag)
+    // BUILD 12: mix background-only -> bar-included by heldAnim.
+    val barBmp = if (mode == "droplet") shared?.barBitmap else null
+    val barMix = if (mode == "droplet" && barBmp != null) heldAnim else 0f
+    shader.setFloatUniform("barMix", barMix)
+    shader.setFloatUniform("nodeIsBar", if (useBarNode) 1f else 0f)
+    // The mix partner: the background strip when the node holds the
+    // bar strip, else the bar strip (or the background strip when
+    // no bar strip exists yet — at rest the mix is 0, so the input
+    // is never sampled then).
+    val inputBmp = if (useBarNode) shared?.bitmap else (barBmp ?: shared?.bitmap)
+    val barInput = BitmapShader(
+      inputBmp ?: return null,
+      Shader.TileMode.CLAMP,
+      Shader.TileMode.CLAMP,
+    )
+    // Node coords -> bitmap coords: scale by 1/CAPTURE_SCALE,
+    // then translate by the srcRect origin. (Matrix.setScale
+    // followed by postTranslate gives exactly [1/s, 0, left;
+    // 0, 1/s, top].) The input bitmap shares the node's strip, so
+    // the same srcRect maps it.
+    val barMatrix = Matrix()
+    barMatrix.setScale(1f / CAPTURE_SCALE, 1f / CAPTURE_SCALE)
+    barMatrix.postTranslate(srcRect.left.toFloat(), srcRect.top.toFloat())
+    barInput.setLocalMatrix(barMatrix)
+    shader.setInputShader("barBackdrop", barInput)
     return try {
       val material = RenderEffect.createRuntimeShaderEffect(shader, "backdrop")
       // Effective blur: the bar and the droplet both blur at
@@ -882,6 +1058,27 @@ uniform float iLens;
 // zoomed-in image, no fisheye. Applied BEFORE the edge
 // displacement, so the lens still bends the magnified surface.
 uniform float magnification;
+// BUILD 12: the bar-included backdrop (a second strip capture with
+// the navbar visible, only the droplet subtree hidden) and the mix
+// from the background-only backdrop to it. 0.0 at rest — the
+// droplet is pixel-identical to today — easing to 1.0 while held,
+// so the held droplet shows the navbar (veil, edge light, all
+// icons/labels, background through the bar) magnified uniformly.
+// The bar always runs at 0.0. HONEST LIMIT: the bar's own live
+// glass is not in the bar-included capture (a hardware RenderNode
+// cannot draw into the software capture canvas), so the captured
+// bar image carries the veil, edge light, icons and labels over
+// the UNBENT photo; the droplet's own rim bend + chain blur apply
+// on top of that.
+// nodeIsBar (BUILD 12): 1.0 while the node holds the BAR strip
+// (held past the midpoint of the hold ramp — only the node content
+// gets the chain blur, so the bar image must BE the node content
+// to stay blurred on hold), 0.0 while it holds the background
+// strip. It tells the shader which input is which side of the mix,
+// so the mix is always background -> bar. See GlassView.buildEffect.
+uniform shader barBackdrop;
+uniform float barMix;
+uniform float nodeIsBar;
 
 float sdCapsule(float2 p, float2 halfSize, float radius) {
     float2 q = float2(max(abs(p.x) - halfSize.x + radius, 0.0), p.y);
@@ -966,7 +1163,26 @@ half4 main(float2 position) {
     // channels, clamped to the node bounds as the library does.
     // The Anivio per-channel split (16/62/57dp) that made the
     // rainbow is deleted.
-    half3 refracted = backdrop.eval(clamp(uv, float2(0.0), resolution - 1.0)).rgb;
+    // BUILD 12: BOTH backdrops are sampled at the same uv and
+    // mixed by barMix — at rest (barMix 0) this is exactly the old
+    // single sample; on hold the sample is the magnified navbar.
+    // The mix happens BEFORE the tint/bend/sheens, so the whole
+    // material — bend, vibrancy, sheen — operates on the mixed
+    // image, exactly as if the bar had been the backdrop all along.
+    // Which input is which side flips with nodeIsBar (see the
+    // uniform comment): before the midpoint of the hold ramp the
+    // node holds the background strip (backdrop = background,
+    // barBackdrop = bar); after it the node holds the bar strip
+    // (backdrop = bar, barBackdrop = background). The mix is
+    // always background -> bar, and each side is the chain-blurred
+    // image at the settled states — only the node content is
+    // blurred, so mid-ramp one side is sampled raw; the blend
+    // hides it.
+    half3 refrBg = backdrop.eval(clamp(uv, float2(0.0), resolution - 1.0)).rgb;
+    half3 refrBar = barBackdrop.eval(clamp(uv, float2(0.0), resolution - 1.0)).rgb;
+    half3 refrFrom = mix(refrBg, refrBar, nodeIsBar);
+    half3 refrTo = mix(refrBar, refrBg, nodeIsBar);
+    half3 refracted = mix(refrFrom, refrTo, barMix);
 
     // The rim band's base colour IS the bent sample, mixed in by
     // `bend` — builds 4-5 kept the undisplaced sample as the
@@ -979,8 +1195,14 @@ half4 main(float2 position) {
     // hold magnification would vanish exactly where the icon
     // sits. With magnification 1.0 (the bar always, the droplet
     // at rest) magBase IS the position, so this changes nothing
-    // there.
-    half3 surface = mix(backdrop.eval(magBase).rgb, tintColor, tintMix);
+    // there. BUILD 12: the base sample mixes background-only ->
+    // bar-included by barMix, same as the refracted sample above
+    // (same nodeIsBar side selection).
+    half3 surfaceBg = backdrop.eval(magBase).rgb;
+    half3 surfaceBar = barBackdrop.eval(magBase).rgb;
+    half3 surfFrom = mix(surfaceBg, surfaceBar, nodeIsBar);
+    half3 surfTo = mix(surfaceBar, surfaceBg, nodeIsBar);
+    half3 surface = mix(mix(surfFrom, surfTo, barMix), tintColor, tintMix);
     half3 displacedSurface = mix(refracted, tintColor, tintMix);
     surface = mix(surface, displacedSurface, bend);
 

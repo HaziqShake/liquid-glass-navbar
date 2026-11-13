@@ -56,6 +56,22 @@
 // reads the strip size (e.g. 540x72), which is itself the proof
 // the strip capture is live on device.
 //
+// BUILD 12 — SECOND STRIP (bar-included). The droplet samples a
+// background-only bitmap, so on hold it could only ever show the
+// photo and the re-rendered icon — never the bar. A second strip
+// bitmap is captured with the navbar left visible and only the
+// droplet subtree hidden; the droplet shader mixes background-only
+// -> bar-included by heldAnim. Captured only while the droplet is
+// held (heldAnim > 0); at rest it is skipped entirely, so the
+// strip-capture performance win is preserved. Both bitmaps are
+// strips with the same origin, so the mapping is unchanged.
+// HONEST LIMIT: the bar's own live glass (its refraction/blur)
+// cannot be in a software capture — a hardware RenderNode cannot
+// draw into the software capture canvas, and every glass view
+// skips drawing during any capture — so the bar-included strip
+// carries the veil, edge light, icons and labels over the UNBENT
+// photo, and the droplet's own rim bend + chain blur apply on top.
+//
 // FEEDBACK LOOP. While a capture is running, `capturing` is true and
 // every GlassView short-circuits its draw(), so no glass ever ends up
 // inside the backdrop — otherwise the glass would refract itself.
@@ -74,18 +90,41 @@ import kotlin.math.min
 
 internal class SharedBackdrop(private val scale: Int) {
 
-  var bitmap: Bitmap? = null
-    private set
-
-  private var canvas: Canvas? = null
-
   /**
-   * The frame this bitmap was captured for. View.getDrawingTime() is
-   * stable across every view drawn in the same frame, which is exactly
-   * the "capture once per frame" token we need without hooking
-   * Choreographer.
+   * BUILD 12 — one strip bitmap and its capture bookkeeping. There
+   * are TWO captures now, sharing the same strip (the union of the
+   * glass rects + margin):
+   *   - bg: the background-only strip (the whole navbar hidden
+   *     while capturing). This is the capture every build since 5
+   *     has used; the bar and the droplet at rest sample it.
+   *   - bar: the bar-included strip (the navbar left visible, only
+   *     the droplet subtree hidden). The droplet samples it on hold,
+   *     mixed in by heldAnim, so the held droplet shows the navbar
+   *     magnified instead of the bare photo. Captured only while
+   *     the droplet is held (heldAnim > 0); at rest it is skipped
+   *     entirely, so the strip-capture performance win is kept.
+   * Both bitmaps are strips with the same origin, so the
+   * bitmapOriginY mapping is the same for both.
    */
-  private var capturedFrame = -1L
+  private class StripCapture {
+    var bitmap: Bitmap? = null
+    var canvas: Canvas? = null
+    var capturedFrame = -1L
+    var capturedStripTopPx = -1
+    var capturedStripHeightPx = -1
+    var stripTopPx = 0
+  }
+
+  private val bg = StripCapture()
+  private val bar = StripCapture()
+
+  val bitmap: Bitmap?
+    get() = bg.bitmap
+
+  /** The bar-included strip bitmap (droplet hold only). Null at
+   *  rest — the second capture is skipped entirely until held. */
+  val barBitmap: Bitmap?
+    get() = bar.bitmap
 
   /** Live glass views under this root. The bitmap dies with the last one. */
   var refCount = 0
@@ -102,20 +141,15 @@ internal class SharedBackdrop(private val scale: Int) {
    */
   private val glassRects = mutableMapOf<Any, Rect>()
 
-  /** Top edge of the captured strip, in root pixels (0 = full root). */
-  private var stripTopPx = 0
-
-  /** The strip the current bitmap was captured for. A strip change
-   *  forces a recapture even inside the same frame (a second glass
-   *  view registering a rect that extends the strip after the first
-   *  view already captured). */
-  private var capturedStripTopPx = -1
-  private var capturedStripHeightPx = -1
-
   /** Bitmap origin in root pixels: the strip's top edge. GlassView
    *  subtracts this when mapping its rect into the bitmap. 0 while
-   *  the capture is still full-root (no rects registered yet). */
-  fun bitmapOriginY(): Int = stripTopPx
+   *  the capture is still full-root (no rects registered yet).
+   *  BUILD 12: the bar strip shares the bg strip (same stripFor),
+   *  so both origins are the same value; barBitmapOriginY() reads
+   *  the bar capture's own record for correctness. */
+  fun bitmapOriginY(): Int = bg.stripTopPx
+
+  fun barBitmapOriginY(): Int = bar.stripTopPx
 
   fun updateRect(key: Any, rect: Rect) {
     val slot = glassRects[key]
@@ -155,15 +189,38 @@ internal class SharedBackdrop(private val scale: Int) {
   /**
    * Capture the strip, unless this frame's capture already happened
    * for the CURRENT strip. A strip change recaptures inside the same
-   * frame (see capturedStripTopPx above).
+   * frame (see StripCapture.capturedStripTopPx).
+   *
+   * The caller hides whatever must stay out of THIS capture before
+   * calling and restores it after: the background-only capture hides
+   * the whole navbar root; the bar-included capture hides only the
+   * droplet subtree. The capture itself just draws the root.
    * @return null on success (or a no-op), or the throwable if a view
    * behind the glass refused a software draw.
    */
   fun captureIfNeeded(root: View, frame: Long): Throwable? {
+    return captureStrip(root, frame, bg)
+  }
+
+  /**
+   * BUILD 12 — the second strip capture: same strip as the
+   * background-only capture, but with the navbar left VISIBLE and
+   * only the droplet subtree hidden (the caller hides it). The
+   * droplet samples this bitmap on hold, mixed in by heldAnim, so
+   * the held droplet shows the navbar magnified instead of the bare
+   * photo. Called only while the droplet is held (heldAnim > 0);
+   * at rest it is skipped entirely. One extra software draw of the
+   * same strip per frame, only while held.
+   */
+  fun captureBarStripIfNeeded(root: View, frame: Long): Throwable? {
+    return captureStrip(root, frame, bar)
+  }
+
+  private fun captureStrip(root: View, frame: Long, target: StripCapture): Throwable? {
     val density = root.resources.displayMetrics.density
     val strip = stripFor(root, density)
-    if (frame == capturedFrame && strip.top == capturedStripTopPx &&
-      strip.height() == capturedStripHeightPx
+    if (frame == target.capturedFrame && strip.top == target.capturedStripTopPx &&
+      strip.height() == target.capturedStripHeightPx
     ) {
       return null
     }
@@ -180,22 +237,25 @@ internal class SharedBackdrop(private val scale: Int) {
     val h = stripHPx / scale
     if (w <= 0 || h <= 0) return null
 
-    var bmp = bitmap
+    var bmp = target.bitmap
     if (bmp == null || bmp.width != w || bmp.height != h) {
       bmp?.recycle()
       bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-      bitmap = bmp
-      canvas = Canvas(bmp)
+      target.bitmap = bmp
+      target.canvas = Canvas(bmp)
     }
-    val c = canvas ?: return null
+    val c = target.canvas ?: return null
 
     // Mark the frame before drawing, not after: if the draw throws,
     // no other view under this root should retry the same failing
     // capture in the same frame.
-    capturedFrame = frame
-    capturedStripTopPx = strip.top
-    capturedStripHeightPx = strip.height()
-    stripTopPx = strip.top
+    // View.getDrawingTime() is stable across every view drawn in the
+    // same frame, which is exactly the "capture once per frame"
+    // token we need without hooking Choreographer.
+    target.capturedFrame = frame
+    target.capturedStripTopPx = strip.top
+    target.capturedStripHeightPx = strip.height()
+    target.stripTopPx = strip.top
 
     bmp.eraseColor(Color.TRANSPARENT)
     c.save()
@@ -216,21 +276,25 @@ internal class SharedBackdrop(private val scale: Int) {
     }
   }
 
-  /** Drop the held frame so the next captureIfNeeded really captures. */
+  /** Drop the held frames so the next capture really captures. */
   fun invalidateFrame() {
-    capturedFrame = -1L
-    capturedStripTopPx = -1
-    capturedStripHeightPx = -1
+    for (target in listOf(bg, bar)) {
+      target.capturedFrame = -1L
+      target.capturedStripTopPx = -1
+      target.capturedStripHeightPx = -1
+    }
   }
 
   private fun dispose() {
-    bitmap?.recycle()
-    bitmap = null
-    canvas = null
-    capturedFrame = -1L
-    capturedStripTopPx = -1
-    capturedStripHeightPx = -1
-    stripTopPx = 0
+    for (target in listOf(bg, bar)) {
+      target.bitmap?.recycle()
+      target.bitmap = null
+      target.canvas = null
+      target.capturedFrame = -1L
+      target.capturedStripTopPx = -1
+      target.capturedStripHeightPx = -1
+      target.stripTopPx = 0
+    }
     glassRects.clear()
   }
 
