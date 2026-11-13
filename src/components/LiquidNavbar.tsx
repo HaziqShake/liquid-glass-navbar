@@ -365,16 +365,21 @@
  *    SharedBackdrop.kt. The second-strip capture CANNOT contain
  *    the bar's live glass by construction, so it is no longer
  *    claimed to.
- * 5. SETTLED-DRIVEN GROUP SHIFT. The icon+label group shift is
- *    decoupled from the live glide position: it follows the
- *    SETTLED tab (settledIndex, set in selectTab) instead of
- *    continuous coverage, eased over 200ms after landing. During
- *    a held slide no tab moves vertically; the incoming tab's
- *    group takes its shifted position when the droplet lands.
- *    Trade-off, stated plainly: mid-glide the passing droplet
- *    shows the incoming tab's group unshifted (up to 7.5dp low).
- *    The droplet's dead bendScale={1} prop is removed (the native
- *    side forces DROPLET_BEND_SCALE for droplet mode).
+ * 5. LANDED-DRIVEN GROUP SHIFT. The icon+label group shift is
+ *    decoupled from the live glide position: it follows the LANDED
+ *    tab (landedIndex, set only when the droplet's glide
+ *    COMPLETES) instead of continuous coverage, eased over 200ms
+ *    after landing. During a held slide no tab moves vertically;
+ *    the incoming tab's group takes its shifted position when the
+ *    droplet lands. (Setting it in selectTab at gesture end would
+ *    still move the groups during the first 200ms of the glide —
+ *    the glide STARTS at gesture end, it does not end there — so
+ *    the value is set in the glide's completion callback, not in
+ *    selectTab itself.) Trade-off, stated plainly: mid-glide the
+ *    passing droplet shows the incoming tab's group unshifted (up
+ *    to 7.5dp low). The droplet's dead bendScale={1} prop is
+ *    removed (the native side forces DROPLET_BEND_SCALE for
+ *    droplet mode).
  *
  * PERFORMANCE. The glass costs one half-resolution STRIP capture
  * per frame (BUILD 11: the union of the glass rects + 16dp
@@ -460,9 +465,9 @@ const HOLD_SCALE = 1.25;
  *  icon+label group's span midpoint sits 7.5dp below the bar
  *  centreline at full labels (icon top -13dp, label text bottom
  *  +28dp), so a uniform zoom about the centre pushes the label
- *  out of the held droplet. The SETTLED tab's icon+label group
+ *  out of the held droplet. The LANDED tab's icon+label group
  *  translates UP by this much, scaled by labelFraction and lift
- *  and the tab's shift amount (1 while settled, 0 otherwise,
+ *  and the tab's shift amount (1 while landed, 0 otherwise,
  *  eased over 200ms after landing) — at rest (lift 0) the bar
  *  layout is exactly as before; on hold the group is centred on
  *  the droplet centreline, so the held content is centred and
@@ -737,26 +742,26 @@ function dropletRectFor(
  * THE GROUP SHIFT (GROUP_SHIFT_DP, 7.5dp), BUILD 14: the
  * icon+label group's span midpoint sits 7.5dp below the bar
  * centreline at full labels, so a uniform zoom about the centre
- * would push the label out of the held droplet. The SETTLED tab's
+ * would push the label out of the held droplet. The LANDED tab's
  * icon and label translate UP together by 7.5dp x labelFraction x
  * lift x shiftAmt. Build 13 graded the shift by live coverage
  * (max(0, 1 - |index - dropletPos|)), so during a held slide the
  * outgoing tab's group slid down 7.5dp and the incoming tab's slid
  * up 7.5dp continuously through the 450ms glide, visible through
  * the enlarged droplet — the slide-up Haziq asked to remove. The
- * shift now follows the SETTLED tab only (settledIndex, set in
- * selectTab at gesture end): during the glide no tab moves
- * vertically, and the incoming tab's group takes its shifted
- * position when the droplet lands, eased over 200ms so the
- * landing is not a hard jump. At rest (lift 0) the shift is
- * exactly 0 and the bar layout is unchanged. Trade-off: mid-glide
- * the passing droplet shows the incoming tab's group unshifted
- * (up to 7.5dp low).
+ * shift now follows the LANDED tab only (landedIndex, set in the
+ * glide's completion callback when the droplet lands): during the
+ * glide no tab moves vertically, and the incoming tab's group
+ * takes its shifted position when the droplet lands, eased over
+ * 200ms so the landing is not a hard jump. At rest (lift 0) the
+ * shift is exactly 0 and the bar layout is unchanged. Trade-off:
+ * mid-glide the passing droplet shows the incoming tab's group
+ * unshifted (up to 7.5dp low).
  */
 function TabContent({
   tab,
   index,
-  settledIndex,
+  landedIndex,
   lift,
   labelFraction,
   color,
@@ -764,7 +769,7 @@ function TabContent({
 }: {
   tab: LiquidTabItem;
   index: number;
-  settledIndex: SharedValue<number>;
+  landedIndex: SharedValue<number>;
   lift: SharedValue<number>;
   labelFraction: SharedValue<number>;
   color: string;
@@ -772,12 +777,12 @@ function TabContent({
 }): React.JSX.Element {
   const Icon = tab.icon;
   // BUILD 14: per-tab shift amount, eased toward 1 while this tab
-  // is the settled one, 0 otherwise, over 200ms. The reaction
-  // fires only when settledIndex changes (gesture end), never
-  // while the droplet glides.
-  const shiftAmt = useSharedValue(index === settledIndex.value ? 1 : 0);
+  // is the landed one, 0 otherwise, over 200ms. The reaction
+  // fires only when landedIndex changes (the droplet lands),
+  // never while the droplet glides.
+  const shiftAmt = useSharedValue(index === landedIndex.value ? 1 : 0);
   useAnimatedReaction(
-    () => (index === settledIndex.value ? 1 : 0),
+    () => (index === landedIndex.value ? 1 : 0),
     (target, prev) => {
       if (prev !== null && target !== prev) {
         shiftAmt.value = withTiming(target, {
@@ -786,7 +791,7 @@ function TabContent({
         });
       }
     },
-    [settledIndex],
+    [landedIndex],
   );
   const shiftStyle = useAnimatedStyle(() => {
     return {
@@ -835,7 +840,7 @@ function TabContent({
 function IconRow({
   tabs,
   selectedIndex,
-  settledIndex,
+  landedIndex,
   lift,
   labelFraction,
   iconActive,
@@ -843,7 +848,7 @@ function IconRow({
 }: {
   tabs: LiquidTabItem[];
   selectedIndex: number;
-  settledIndex: SharedValue<number>;
+  landedIndex: SharedValue<number>;
   lift: SharedValue<number>;
   labelFraction: SharedValue<number>;
   iconActive: string;
@@ -858,7 +863,7 @@ function IconRow({
             <TabContent
               tab={tab}
               index={index}
-              settledIndex={settledIndex}
+              landedIndex={landedIndex}
               lift={lift}
               labelFraction={labelFraction}
               color={active ? iconActive : iconInactive}
@@ -901,11 +906,14 @@ export function LiquidNavbar({
   // its tab automatically — the slot width is derived from the live bar
   // width below.
   const dropletPos = useSharedValue(selectedIndex);
-  // BUILD 14 — SETTLED TAB. The tab the selection has actually
-  // landed on (set in selectTab, at gesture end). The icon+label
-  // group shift follows THIS, not the live gliding dropletPos,
-  // so no tab moves vertically during a held slide.
-  const settledIndex = useSharedValue(selectedIndex);
+  // BUILD 14 — LANDED TAB. The tab the droplet has actually
+  // landed on: set ONLY in the glide's completion callback (see
+  // selectTab), never at gesture end — the glide STARTS at gesture
+  // end, so setting it there would still move the groups during
+  // the first 200ms of the glide. The icon+label group shift
+  // follows THIS, not the live gliding dropletPos, so no tab moves
+  // vertically during a held slide.
+  const landedIndex = useSharedValue(selectedIndex);
   // 0 = resting over the active tab, 1 = held (magnified in place).
   // Owned by the DemoScreen (a prop), so the debug readout can
   // print the hold progress — build 8 ground truth for the hold.
@@ -964,17 +972,27 @@ export function LiquidNavbar({
     (index: number) => {
       'worklet';
       const clamped = Math.max(0, Math.min(tabs.length - 1, Math.round(index)));
-      // BUILD 14: the settled tab changes HERE, at gesture end —
-      // the icon+label group shift follows this value, so it
-      // changes only when the droplet lands, never mid-glide.
-      settledIndex.value = clamped;
-      dropletPos.value = withTiming(clamped, {
-        duration: 450,
-        easing: Easing.inOut(Easing.exp),
-      });
+      dropletPos.value = withTiming(
+        clamped,
+        {
+          duration: 450,
+          easing: Easing.inOut(Easing.exp),
+        },
+        (finished) => {
+          'worklet';
+          // BUILD 14: the landed tab changes ONLY when the glide
+          // COMPLETES (finished = the animation ran to its target,
+          // not interrupted by a new gesture). Setting it here —
+          // not in selectTab at gesture end — is what keeps every
+          // tab vertically still during the glide: the shift
+          // follows landedIndex, and landedIndex cannot change
+          // mid-glide.
+          if (finished) landedIndex.value = clamped;
+        },
+      );
       runOnJS(onSelect)(clamped);
     },
-    [tabs.length, dropletPos, settledIndex, onSelect],
+    [tabs.length, dropletPos, landedIndex, onSelect],
   );
 
   // Keep the droplet in step if the parent changes the selection.
@@ -1397,7 +1415,7 @@ export function LiquidNavbar({
               <IconRow
                 tabs={tabs}
                 selectedIndex={selectedIndex}
-                settledIndex={settledIndex}
+                landedIndex={landedIndex}
                 lift={lift}
                 labelFraction={labelFraction}
                 iconActive={iconActive}
@@ -1453,7 +1471,7 @@ export function LiquidNavbar({
               <IconRow
                 tabs={tabs}
                 selectedIndex={selectedIndex}
-                settledIndex={settledIndex}
+                landedIndex={landedIndex}
                 lift={lift}
                 labelFraction={labelFraction}
                 iconActive={iconActive}
