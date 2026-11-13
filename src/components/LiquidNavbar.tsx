@@ -280,6 +280,62 @@
  *    blur apply on top of that. The device check must confirm the
  *    held droplet still reads as the navbar magnified.
  *
+ * BUILD 13 (13 Nov 2026). Haziq tested build 12 on his phone:
+ * four problems, each rebuilt from scratch (standing rule):
+ * 1. BLUR AND VEIL STAY ON WHILE HELD. He wants blur and veil on
+ *    the droplet at rest but NOT on hold — on hold the droplet is
+ *    a clear magnifying lens (this REVERSES his build 9 verdict
+ *    that blur stays on hold; the latest instruction stands). The
+ *    droplet's blur is now hold-driven in the native chain
+ *    (blurRadiusDp * (1 - heldAnim), easing 3.3dp -> 0 over the
+ *    existing 200ms hold ramp); the bar keeps its 3.3dp. The
+ *    droplet's own veil already faded with lift; the bar's veil
+ *    was baked into the bar-included capture, so the native side
+ *    now hides the bar's veil View during that capture
+ *    (findBarVeil, size+leaf match) and restores it in `finally`.
+ * 2. HOLD GROWTH CHANGED THE SHAPE. Build 12 grew only the frame
+ *    height to 1.20x the bar height — aspect -27% expanded, -30%
+ *    shrunk. The height lerp is DELETED: the layout rect stays at
+ *    rest geometry at every lift value, and the hold growth is a
+ *    UNIFORM SCALE TRANSFORM (HOLD_SCALE 1.25) about the frame
+ *    centre. Held 70.0dp expanded (bigger than the full bar),
+ *    52.5dp shrunk (bigger than the shrunk bar, below the full
+ *    bar). The shader's hold magnification M is 1.0 now — the
+ *    frame scale IS the magnification.
+ * 3. TAPPING DID NOT SWITCH TABS. Build 12's single Pan put the
+ *    tap branch inside pan.onEnd, which CANNOT run on a real tap:
+ *    RNGH calls onEnd only if the handler was ACTIVE, and a Pan
+ *    becomes ACTIVE only on pointer movement — a motionless tap
+ *    goes BEGAN then FAILS, and onFinalize re-selected the current
+ *    tab. The dedicated Gesture.Tap is restored (build 11's tap)
+ *    as Gesture.Exclusive(pan, tap), and onFinalize is guarded by
+ *    panOwned (set in onStart/onUpdate) so a tap the Tap wins
+ *    cannot trigger the Pan's restore.
+ * 4. ICONS AND TEXT NOT CENTRED IN THE GROWN DROPLET. The label
+ *    hangs below the icon, so a uniform zoom about the centre
+ *    pushes it further down while the icon stays put — the held
+ *    content's centroid sat ~+10dp below the centre. The fix does
+ *    NOT re-render the icon/label above the glass (LensTabIcon is
+ *    DELETED — the icons stay below the droplet, seen only through
+ *    the glass, never re-rendered above it): the active tab's
+ *    icon+label group translates UP 7.5dp x labelFraction x lift
+ *    x coverage in the BAR itself (TabContent), so on hold the
+ *    group is centred on the droplet centreline, and the at-rest
+ *    layout is unchanged. With M = 1.0 and s = 1.25 the held
+ *    content sits centred with symmetric ~9.4dp margins.
+ * 5. TAMED DROPLET BEND (his extra instruction the same day).
+ *    The droplet's refraction bent the icons behind it (the icon's
+ *    top edge displaced 4.9dp expanded, 8.4dp shrunk at bend 1.0).
+ *    The droplet's bend now runs at DROPLET_BEND_SCALE 0.12x, so
+ *    the worst-case icon edge displaces ~1.0dp rendered while the
+ *    rim still bends ~1.4-1.7dp and the edge light + sheen keep it
+ *    reading as glass. The BAR's refraction is untouched (bendScale
+ *    1.0 shipped — confirmed right in build 9).
+ *    The droplet now ALWAYS samples the bar-included strip (the
+ *    re-rendered icon is gone, so the bar image is the only way the
+ *    icons are visible through it at rest too); the second strip is
+ *    captured whenever the droplet is shown, not only while held.
+ *
  * PERFORMANCE. The glass costs one half-resolution STRIP capture
  * per frame (BUILD 11: the union of the glass rects + 16dp
  * margin, ~145dp tall instead of the ~800dp full root), shared
@@ -301,8 +357,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, useWindowDimensions, View, type ViewStyle } from 'react-native';
 import Animated, {
   Easing,
-  Extrapolation,
-  interpolate,
   runOnJS,
   runOnUI,
   useAnimatedReaction,
@@ -311,7 +365,6 @@ import Animated, {
   useSharedValue,
   withDelay,
   withTiming,
-  type AnimatedStyle,
   type SharedValue,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -341,18 +394,41 @@ const OUTSET = 24;
  *  height = bar height minus 2x4dp, corner radius =
  *  min(tabWidth, itemHeight)/2. NOT a 48dp circle. */
 const DROPLET_INSET = 4;
-/** BUILD 12 — HOLD FRAME SCALE. On hold the droplet FRAME itself
- *  grows, in place about its centre, to HOLD_FRAME_SCALE times the
- *  CURRENT bar height: expanded 64dp -> 76.8dp (bigger than the
- *  full bar), shrunk 50dp -> 60.0dp (bigger than the shrunk bar
- *  but still 4.0dp below the full 64dp bar — a full inset's worth,
- *  clearly readable as "below the full bar" and robust to dp->px
- *  quantisation; 1.25x would leave only a 1.5dp margin, within
- *  rounding noise). Build 11 ran 1.15x; Haziq asked for a little
- *  bigger on 13 Nov and the diagnosis picks 1.20x. The frame NEVER
- *  floats: its centroid stays on the bar's centreline at every
- *  lift value (see dropletRectFor). */
-const HOLD_FRAME_SCALE = 1.2;
+/** BUILD 13 — HOLD SCALE. On hold the droplet frame grows by a
+ *  UNIFORM SCALE TRANSFORM about its centre, s = 1.25 (frame
+ *  geometry never changes — build 12 grew only the frame HEIGHT
+ *  to 1.20x the bar height, which changed the aspect ratio -27%
+ *  expanded / -30% shrunk). Size rule, solved against the REST
+ *  droplet height: expanded rest 56dp needs 56s > 64 (s > 1.143);
+ *  shrunk rest 42dp needs 50 < 42s <= 64 (s in (1.190, 1.524]);
+ *  intersection s in (1.19, 1.52]. 1.25 gives held 70.0dp expanded
+ *  (bigger than the full bar) and 52.5dp shrunk (bigger than the
+ *  shrunk bar, below the full bar). NOT 1.20: shrunk 50.4dp is
+ *  only 0.4dp above the shrunk bar, inside dp-to-px rounding
+ *  noise. The width scales too (slot x s), so on end tabs the held
+ *  droplet protrudes ~7dp past the bar's end caps horizontally —
+ *  allowed (the held droplet is unclipped and over the bar by
+ *  spec). The frame NEVER floats: its centroid stays on the bar's
+ *  centreline at every lift value, because the scale is about the
+ *  frame centre. The glass wrapper and edge-light SVG are children
+ *  of the frame, so they scale along; the shader's resolution
+ *  uniform stays rest-size. The hold magnification is optical no
+ *  more: the shader's M is 1.0 now (see settings) and this frame
+ *  scale IS the magnification. */
+const HOLD_SCALE = 1.25;
+/** BUILD 13 — GROUP SHIFT. The icon+label group's span midpoint
+ *  sits 7.5dp below the bar centreline at full labels (icon top
+ *  -13dp, label text bottom +28dp), so a uniform zoom about the
+ *  centre pushes the label out of the held droplet. The active
+ *  tab's icon+label group translates UP by this much, scaled by
+ *  labelFraction and lift and the tab's coverage — at rest (lift 0)
+ *  the bar layout is exactly as before; on hold the group is
+ *  centred on the droplet centreline, so the held content is
+ *  centred and inside with symmetric margins. The shift is
+ *  invisible in the live bar: the active tab is covered by the
+ *  droplet at every lift value (the shifted span, -20.5..+20.5dp,
+ *  stays inside the droplet's current half-height, 28..35dp). */
+const GROUP_SHIFT_DP = 7.5;
 /** How far the droplet lifts above the bar while held, in dp.
  *  BUILD 10: 0 — REMOVED. Build 9's droplet floated up on hold
  *  and Haziq wants the hold ENLARGE redone instead: on hold the
@@ -392,10 +468,14 @@ export interface LiquidNavbarProps {
    *  it — the on-screen readout prints the hold progress as ground
    *  truth for the device check. BUILD 10: `lift` is the hold
    *  PROGRESS now, not a lift distance: it drives the hold
-   *  magnification, in the shader (via `held`) and in the icons
-   *  (MagnifiedTabIcon / LensTabIcon). BUILD 11: it also drives
-   *  the hold FRAME growth (dropletRectFor). BUILD 12: the 150ms
-   *  hold gate is a withDelay on lift, and `held` mirrors lift. */
+   *  magnification, in the shader (via `held`) and in the icons.
+   *  BUILD 11: it also drives the hold FRAME growth
+   *  (dropletRectFor). BUILD 12: the 150ms hold gate is a
+   *  withDelay on lift, and `held` mirrors lift. BUILD 13: lift
+   *  drives the uniform frame SCALE (dropletFrameStyle), the
+   *  blur/veil fades (native heldAnim, dropletVeilStyle) and the
+   *  icon+label group shift (TabContent); the shader's
+   *  magnification is 1.0. */
   lift: SharedValue<number>;
   settings: NavbarSettings;
 }
@@ -557,40 +637,38 @@ function DropletEdgeLight({
 
 /**
  * BUILD 12 — the droplet rect, from scratch. One shared rule, so
- * the frame, its glass wrapper, the lens icons and the edge light
- * can never disagree:
+ * the frame, its glass wrapper and the edge light can never
+ * disagree:
  *
  *   The droplet rect is the BAR rect inset DROPLET_INSET (4dp) on
  *   all sides, intersected with the tab slot: left = max(4,
  *   slotLeft), right = min(barW - 4, slotRight), top = 4, bottom =
- *   barH - 4, height = barH - 8 at rest. Middle tabs are
- *   unaffected (their slot rect already sits inside the inset
- *   bar); end tabs become 4dp narrower, and their cap centre lands
- *   EXACTLY on the bar's cap centre — a uniform 4dp outline gap at
- *   every angle, which a slot-width capsule centred on its tab
- *   cannot have (build 11's failure: cap centres 4dp apart, gap
- *   0dp at the centreline, 4dp at top/bottom).
+ *   barH - 4, height = barH - 8. Middle tabs are unaffected (their
+ *   slot rect already sits inside the inset bar); end tabs become
+ *   4dp narrower, and their cap centre lands EXACTLY on the bar's
+ *   cap centre — a uniform 4dp outline gap at every angle, which a
+ *   slot-width capsule centred on its tab cannot have (build 11's
+ *   failure: cap centres 4dp apart, gap 0dp at the centreline, 4dp
+ *   at top/bottom).
  *
- *   On HOLD the height grows in place about the centreline to
- *   barH * HOLD_FRAME_SCALE (1.20x): top = (barH - height) / 2,
- *   negative on hold (the frame protrudes past the bar, never
- *   floats). The 4dp side inset applies to the grown frame's
- *   intersection too; the width never grows, only the height.
- *
- *   Radius is height / 2 at every lift value (at rest that IS
- *   barH/2 - 4, the concentric rule — no interpolation needed).
+ *   BUILD 13: the rect is the REST geometry at EVERY lift value —
+ *   there is no height lerp anymore. On hold the frame grows by a
+ *   UNIFORM SCALE TRANSFORM about its centre (HOLD_SCALE 1.25, in
+ *   dropletFrameStyle), so the aspect ratio never changes; the
+ *   layout rect never changes. Radius is height / 2, which IS
+ *   barH/2 - 4, the concentric rule.
  *
  *   Consequence to know about: on end tabs the droplet centre
- *   shifts ~2dp off the tab centre (frame left 4 vs 0). The lens
- *   icon stays centred on the tab; the shader magnification centre
- *   is the frame centre. At 1.35x zoom that 2dp offset shifts the
- *   magnified icon by ~0.5dp — negligible.
+ *   shifts ~2dp off the tab centre (frame left 4 vs 0). The icon
+ *   stays centred on the tab; the shader magnification centre is
+ *   the frame centre. At 1.25x frame scale that 2dp offset shifts
+ *   the magnified icon by ~0.5dp — negligible, the prescribed cost
+ *   of concentricity.
  */
 function dropletRectFor(
   barW: number,
   barH: number,
   pos: number,
-  liftValue: number,
   tabCount: number,
 ): { left: number; width: number; height: number; top: number } {
   'worklet';
@@ -599,36 +677,41 @@ function dropletRectFor(
   const slotRight = slotLeft + slot;
   const left = Math.max(DROPLET_INSET, slotLeft);
   const right = Math.min(barW - DROPLET_INSET, slotRight);
-  const restH = barH - DROPLET_INSET * 2;
-  const heldH = barH * HOLD_FRAME_SCALE;
-  const height = restH + (heldH - restH) * liftValue;
-  return { left, width: right - left, height, top: (barH - height) / 2 };
+  const height = barH - DROPLET_INSET * 2;
+  return { left, width: right - left, height, top: DROPLET_INSET };
 }
 
 /**
- * BUILD 10 — the icon of one tab ON THE ICON ROW, magnified with
- * the hold. This is the icon BENEATH the droplet: the droplet is
- * topmost (its glass and rim light sit above this row), and on
- * hold this icon scales uniformly about the droplet centre, in
- * sync with the shader's optical zoom — the same `lift` value and
- * the same factor M. When the droplet is centred on this tab the
- * icon's centre IS the droplet centre, so scaling about its own
- * centre is scaling about the droplet centre; the coverage weight
- * fades the scale to 1 a full slot away, so only the covered tab
- * grows and a distant tab never does. NO translate: the icon's
- * centre stays exactly on its tab centre, so it always coincides
- * with the LensTabIcon's centre and the two can never form a
- * double image at the droplet's edge.
+ * BUILD 13 — one tab's icon + label, ON THE ICON ROW, below the
+ * droplet. There is NO re-rendered icon above the droplet glass
+ * anymore (LensTabIcon is deleted): the icons stay below the
+ * droplet and are seen only through the glass, via the
+ * bar-included second-strip capture, which the droplet samples at
+ * rest as well as on hold. The icon does NOT scale (the frame
+ * scale IS the hold magnification — scaling the icon as well
+ * would double-magnify it in the capture), and the label does NOT
+ * scale either.
  *
- * The label is NOT scaled (same as build 9): only the icon
- * magnifies.
+ * The ONE thing this component does on hold is the GROUP SHIFT
+ * (GROUP_SHIFT_DP, 7.5dp): the icon+label group's span midpoint
+ * sits 7.5dp below the bar centreline at full labels, so a uniform
+ * zoom about the centre would push the label out of the held
+ * droplet. The active tab's icon and label translate UP together
+ * by 7.5dp x labelFraction x lift x coverage, so on hold the group
+ * is centred on the droplet centreline and the held content sits
+ * centred and inside with symmetric margins. At rest (lift 0) the
+ * shift is exactly 0 and the bar layout is unchanged. The shift is
+ * invisible in the live bar: the active tab is covered by the
+ * droplet at every lift value. Only the covered tab shifts
+ * (coverage fades to 0 a full slot away), so neighbouring tabs
+ * never move.
  */
-function MagnifiedTabIcon({
+function TabContent({
   tab,
   index,
   dropletPos,
   lift,
-  holdMagnification,
+  labelFraction,
   color,
   weight,
 }: {
@@ -636,140 +719,44 @@ function MagnifiedTabIcon({
   index: number;
   dropletPos: SharedValue<number>;
   lift: SharedValue<number>;
-  holdMagnification: number;
+  labelFraction: SharedValue<number>;
   color: string;
   weight: 'fill' | 'regular';
 }): React.JSX.Element {
   const Icon = tab.icon;
-  const iconStyle = useAnimatedStyle(() => {
+  const shiftStyle = useAnimatedStyle(() => {
     const coverage = Math.max(0, 1 - Math.abs(index - dropletPos.value));
     return {
-      transform: [{ scale: 1 + (holdMagnification - 1) * lift.value * coverage }],
+      transform: [
+        {
+          translateY:
+            -GROUP_SHIFT_DP * labelFraction.value * lift.value * coverage,
+        },
+      ],
+    };
+  });
+  const labelStyle = useAnimatedStyle(() => {
+    const coverage = Math.max(0, 1 - Math.abs(index - dropletPos.value));
+    return {
+      height: LABEL_DP * labelFraction.value,
+      opacity: labelFraction.value,
+      transform: [
+        {
+          translateY:
+            -GROUP_SHIFT_DP * labelFraction.value * lift.value * coverage,
+        },
+      ],
     };
   });
   return (
-    <Animated.View style={iconStyle}>
-      <Icon size={ICON_DP} color={color} weight={weight} />
-    </Animated.View>
-  );
-}
-
-/**
- * BUILD 10 — the icon + label of one tab, as seen THROUGH the
- * droplet lens. Rendered inside the droplet frame, ABOVE the
- * glass and the veil but BELOW the droplet's edge light — so the
- * rim light crosses over it and it reads as UNDER the glass, not
- * pasted on top (build 9's DropletTabDup sat above the edge light
- * as well as the glass, which is why it is removed).
- *
- * WHY THIS EXISTS AT ALL. The droplet glass is OPAQUE inside its
- * capsule, so the icon beneath it (MagnifiedTabIcon, above) is
- * hidden wherever the droplet covers it. Scaling the underlying
- * icon alone would therefore make the active icon INVISIBLE on
- * hold, not magnified. This is the equivalent that makes the icon
- * visibly magnify under the topmost droplet: the lens icon uses
- * the SAME lift-driven uniform scale as the underlying icon (same
- * factor M, same coverage weight, same centre), so the two agree
- * exactly wherever they overlap. Opacity follows the same
- * coverage the icon crossfade uses (1 when the droplet is
- * centred on this tab, 0 a full slot away), so a glide
- * crossfades between tabs with no pop. Position: the icon is
- * slot-wide and translated so its centre tracks the tab's centre
- * relative to the droplet frame — the frame's left edge is
- * dropletRect.left (BUILD 12: on end tabs the frame is inset 4dp
- * from the bar edge, so the frame's left edge is NOT the tab's
- * left edge; translating by (index - dropletPos) * slot would put
- * the icon 4dp off its tab). The label is re-rendered here too,
- * unscaled — the underlying label is hidden under the glass just
- * like the icon.
- *
- * BUILD 12 — HOLD FADE. The droplet glass now samples a second,
- * bar-included capture on hold (see the header), so the icon the
- * user sees magnifying inside the lens is the bar's own icon from
- * that capture. This lens icon therefore fades OUT as lift -> 1
- * (opacity x (1 - lift)): at rest it is exactly as before, on
- * hold it is gone, so the active icon can never double (one
- * magnified from the bitmap, one re-rendered on top). The same
- * fade applies to the re-rendered label, which is magnified in
- * the bar capture too.
- */
-function LensTabIcon({
-  tab,
-  index,
-  tabsLength,
-  dropletPos,
-  dropletRect,
-  barWidth,
-  lift,
-  holdMagnification,
-  iconActive,
-  iconInactive,
-  isActive,
-  labelWrapStyle,
-}: {
-  tab: LiquidTabItem;
-  index: number;
-  tabsLength: number;
-  dropletPos: SharedValue<number>;
-  dropletRect: SharedValue<{ left: number; width: number; height: number; top: number }>;
-  barWidth: SharedValue<number>;
-  lift: SharedValue<number>;
-  holdMagnification: number;
-  iconActive: string;
-  iconInactive: string;
-  isActive: boolean;
-  labelWrapStyle: AnimatedStyle<ViewStyle>;
-}): React.JSX.Element {
-  const Icon = tab.icon;
-  const lensStyle = useAnimatedStyle(() => {
-    const slot = barWidth.value / tabsLength;
-    const coverage = interpolate(
-      dropletPos.value,
-      [index - 1, index, index + 1],
-      [0, 1, 0],
-      Extrapolation.CLAMP,
-    );
-    return {
-      width: slot,
-      // BUILD 12: the icon's left edge in bar coords is
-      // index * slot; the frame's left edge is dropletRect.left.
-      // On middle tabs the two agree with the old formula; on end
-      // tabs the frame is inset 4dp, so the old (index -
-      // dropletPos) * slot would sit the icon 4dp off its tab.
-      // The icon stays centred on the TAB; the frame centre is
-      // ~2dp off the tab centre on end tabs (the prescribed cost
-      // of concentricity — the magnified icon shifts ~0.5dp).
-      // Opacity also fades with (1 - lift): on hold the bar's own
-      // icon from the bar-included capture is the visible one.
-      opacity: coverage * (1 - lift.value),
-      transform: [{ translateX: index * slot - dropletRect.value.left }],
-    };
-  });
-  // The icon inside the lens scales UNIFORMLY with the droplet's
-  // hold zoom: one scale factor, same lift value and same factor M
-  // as the shader's optical zoom — and the same factor as the
-  // underlying icon (MagnifiedTabIcon). The label does not scale.
-  const lensIconStyle = useAnimatedStyle(() => {
-    const coverage = Math.max(0, 1 - Math.abs(index - dropletPos.value));
-    return {
-      transform: [{ scale: 1 + (holdMagnification - 1) * lift.value * coverage }],
-    };
-  });
-  return (
-    <Animated.View style={[styles.lensTabIcon, lensStyle]} pointerEvents="none">
-      <Animated.View style={lensIconStyle}>
-        <Icon
-          size={ICON_DP}
-          color={isActive ? iconActive : iconInactive}
-          weight={isActive ? 'fill' : 'regular'}
-        />
+    <>
+      <Animated.View style={shiftStyle}>
+        <Icon size={ICON_DP} color={color} weight={weight} />
       </Animated.View>
-      <Animated.View style={[styles.labelWrap, labelWrapStyle]}>
-        <Text style={[styles.label, { color: isActive ? iconActive : iconInactive }]}>
-          {tab.label}
-        </Text>
+      <Animated.View style={[styles.labelWrap, labelStyle]}>
+        <Text style={[styles.label, { color }]}>{tab.label}</Text>
       </Animated.View>
-    </Animated.View>
+    </>
   );
 }
 
@@ -875,14 +862,27 @@ export function LiquidNavbar({
     runOnUI(selectTab)(selectedIndex);
   }, [selectedIndex, selectTab]);
 
-  // BUILD 12 — ONE POINTER STREAM, NO GESTURE ARBITRATION.
-  // Rebuilt from scratch: the three-gesture
-  // Exclusive(Simultaneous(longPress, pan), tap) stack is DELETED.
-  // It was unchanged since build 10, when hold worked, and the
-  // regression correlates exactly with the SDK 54 downgrade
-  // (RNGH 2.32 -> 2.28, Reanimated 4.5.1 -> 4.1.7), so the
-  // composition itself is the suspect — no version API mismatch
-  // exists in the code (every API used exists in RNGH 2.28).
+  // BUILD 13 — PAN + TAP, NO GESTURE ARBITRATION BEYOND THAT.
+  // Build 12's single-Pan model is DELETED as the tap path: its
+  // diagnosis was WRONG. The regression does NOT correlate with the
+  // SDK 54 downgrade (RNGH 2.32 -> 2.28) — the mechanism is
+  // version-independent, and build 11 worked because it HAD a Tap
+  // gesture. From the installed RNGH 2.28.0 source
+  // (gesture.js:93-96), onEnd is called ONLY if the handler was
+  // previously ACTIVE, and a Pan becomes ACTIVE only on pointer
+  // movement (minDistance / activeOffset; build 12 set neither, so
+  // the native default applies and movement is required in any
+  // case). A pure tap produces no move event: the handler goes
+  // BEGAN (onBegin fires, arming the 150ms lift gate), then FAILS
+  // on pointer-up. onEnd never runs; only onFinalize runs
+  // (gesture.js:109-111), and build 12's onFinalize treated every
+  // non-ended gesture as a cancel and re-selected the current tab.
+  // Net effect on device: tapping another tab did nothing and the
+  // droplet glided back. The file's own build 12 comment ("no
+  // minDistance, no activeOffset — it must receive the down event")
+  // confused receiving down (BEGAN) with activation (ACTIVE). No
+  // minDistance value can fix it: a motionless tap has no move
+  // event, so it must be a Tap gesture (or onTouchesUp).
   //
   // Interaction model, from studying Anivio (study only — no
   // Anivio code is copied and its look/feel is NOT revived):
@@ -895,7 +895,12 @@ export function LiquidNavbar({
   //   (1) One Gesture.Pan (maxPointers 1, no minDistance, no
   //       activeOffset — it must receive the down event, as
   //       Anivio's awaitFirstDown(requireUnconsumed = false)
-  //       does) owns the pointer from down to up.
+  //       does) owns the pointer from down to up for DRAGS and
+  //       HOLDS. A dedicated Gesture.Tap owns TAPS (build 11's
+  //       tap, restored): Gesture.Exclusive(pan, tap) — if the
+  //       finger moves, the Pan activates first and the Tap fails;
+  //       if it does not move, the Tap activates on pointer-up and
+  //       selects the tab under the finger.
   //   (2) Begin on down: records downX/downY, anchors at the LIVE
   //       fractional dropletPos (Anivio anchors at indexAt(downX)
   //       because its pill is always on a tab; ours anchors at the
@@ -906,20 +911,24 @@ export function LiquidNavbar({
   //       event.x / slot - 0.5 jumped if the slot width changed
   //       mid-drag as the bar shrank; the relative form is robust
   //       to that.)
-  //   (4) Tap vs drag by MOVEMENT, not by separate gestures:
-  //       movedDistance = max(|dx|, |dy|); on release, < 4dp
-  //       selects the tab under the finger at down (indexAt), else
-  //       snaps to round(dropletPos). One snap rule, one selection
-  //       path (Anivio finish(): if (movedDistance < 4)
-  //       indexAt(downX) else floor(target + 0.5)).
+  //   (4) Tap vs drag by MOVEMENT, not by separate gestures alone:
+  //       the Tap's onEnd selects the tab under the finger
+  //       (indexAt); the Pan's onEnd snaps to round(dropletPos).
+  //       The Pan's onEnd keeps its < 4dp tap branch as a fallback
+  //       for the edge case where the Pan activates on a tiny
+  //       movement — it cannot run on a real tap (see above).
   //   (5) Cancel restores: onFinalize with no onEnd (interrupted)
-  //       re-selects the selected tab and drops lift. The old code
-  //       had no position restore — a cancelled drag stranded the
-  //       droplet mid-way. (Anivio's finally { if (!finished)
-  //       motion.cancel(selectedIndex) }.)
+  //       re-selects the selected tab and drops lift — but ONLY
+  //       when the Pan actually owned the pointer (panOwned, set
+  //       in onStart/onUpdate). A tap the Tap gesture wins also
+  //       fires the Pan's onFinalize (the Pan failed); without the
+  //       guard it would re-select the current tab and fight the
+  //       tap. The old code had no position restore — a cancelled
+  //       drag stranded the droplet mid-way. (Anivio's finally {
+  //       if (!finished) motion.cancel(selectedIndex) }.)
   //   (6) Multi-touch guard: maxPointers(1) — a second finger
   //       fails the gesture, onFinalize restores, nothing selects.
-  // HOLD within the single-Pan model (no LongPress gesture):
+  // HOLD within the Pan model (no LongPress gesture):
   // onBegin arms lift with withDelay(150, withTiming(1, 180ms));
   // onEnd/onFinalize assign lift -> 0, which cancels a
   // still-pending delayed ramp. The 150ms hold gate is preserved
@@ -927,17 +936,16 @@ export function LiquidNavbar({
   // fired lift on EVERY touch-down including taps), while a drag
   // keeps lift at 1 for its duration, as before. `held` follows
   // lift via the reaction above.
-  // FALLBACK if this single Pan is also dead on device: that
-  // result proves the RUNTIME, not the composition, is broken —
-  // then bump react-native-gesture-handler and/or
-  // react-native-reanimated and re-test; do NOT re-add the
-  // three-gesture stack. The lift readout is the discriminator.
   const downX = useSharedValue(0);
   const downY = useSharedValue(0);
   const dragStartPos = useSharedValue(0);
   const dragStartSlot = useSharedValue(0);
   const movedDistance = useSharedValue(0);
   const gestureEnded = useSharedValue(false);
+  // BUILD 13: true only once the Pan actually became ACTIVE
+  // (onStart/onUpdate) — a tap never activates it, so the Pan's
+  // onFinalize must not restore on a tap the Tap gesture wins.
+  const panOwned = useSharedValue(false);
 
   const pan = Gesture.Pan()
     .maxPointers(1)
@@ -957,6 +965,7 @@ export function LiquidNavbar({
       dragStartSlot.value = barWidth.value / tabs.length;
       movedDistance.value = 0;
       gestureEnded.value = false;
+      panOwned.value = false;
       // Arm the hold gate: lift stays 0 for 150ms, then ramps to
       // 1 over 180ms. Assigning lift -> 0 on release cancels a
       // still-pending delayed ramp, so a quick tap never lifts.
@@ -965,8 +974,15 @@ export function LiquidNavbar({
         withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) }),
       );
     })
+    .onStart(() => {
+      'worklet';
+      // The Pan is ACTIVE now: it owns the pointer (movement
+      // happened). Only from here may onFinalize restore.
+      panOwned.value = true;
+    })
     .onUpdate((event) => {
       'worklet';
+      panOwned.value = true;
       const dx = event.x - downX.value;
       const dy = event.y - downY.value;
       movedDistance.value = Math.max(
@@ -984,8 +1000,12 @@ export function LiquidNavbar({
       gestureEnded.value = true;
       lift.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
       if (movedDistance.value < 4) {
-        // Tap: the tab under the finger at down, in the geometry
-        // at down time (the slot captured at drag start).
+        // Fallback only: onEnd runs only if the Pan was ACTIVE,
+        // which needs movement — a real tap never reaches here
+        // (the Tap gesture owns it). If the Pan activated on a
+        // tiny movement, select the tab under the finger at down,
+        // in the geometry at down time (the slot captured at drag
+        // start).
         const index = Math.floor(downX.value / dragStartSlot.value);
         selectTab(Math.max(0, Math.min(tabs.length - 1, index)));
       } else {
@@ -995,14 +1015,34 @@ export function LiquidNavbar({
     })
     .onFinalize(() => {
       'worklet';
-      // onFinalize also runs after a completed onEnd; the flag
-      // keeps the restore for the interrupted case only.
-      if (gestureEnded.value) return;
+      // onFinalize also runs after a completed onEnd, and after a
+      // FAILED Pan — including every tap the Tap gesture wins.
+      // The flags keep the restore for the interrupted-drag case
+      // only: not after onEnd, and not when the Pan never owned
+      // the pointer.
+      if (gestureEnded.value || !panOwned.value) return;
       lift.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
       // Cancelled mid-drag: the droplet glides back to the
       // selected tab instead of stranding mid-way.
       selectTab(selectedIndex);
     });
+
+  // BUILD 13: the dedicated Tap gesture (build 11's tap, restored).
+  // A Pan's onEnd cannot run on a real tap — onEnd fires only if
+  // the handler was ACTIVE, and a motionless tap never activates a
+  // Pan — so the tap MUST be its own gesture. Do NOT try
+  // .minDistance(0) on the Pan instead: a motionless tap has no
+  // move event, so no minDistance value can activate it.
+  const tap = Gesture.Tap().onEnd((event) => {
+    'worklet';
+    const slot = barWidth.value / tabs.length;
+    selectTab(Math.floor(event.x / slot));
+  });
+
+  // Exclusive: the Pan wins on movement (the Tap fails), the Tap
+  // wins on a motionless pointer-up (the Pan fails). One of them
+  // always owns the release — never both, never neither.
+  const gestures = Gesture.Exclusive(pan, tap);
 
   const barWrapStyle = useAnimatedStyle(() => ({
     width: barWidth.value,
@@ -1023,60 +1063,62 @@ export function LiquidNavbar({
     height: barHeight.value + OUTSET * 2,
   }));
 
-  // THE DROPLET, BUILD 12 (rebuilt from scratch — geometry, hold,
-  // slide, hold rendering — from the build 11 diagnosis).
+  // THE DROPLET, BUILD 13 (rebuilt from scratch — geometry, hold,
+  // slide, hold rendering, bend — from the build 12 diagnosis).
   // Anivio's shape, shape only: a capsule spanning ONE TAB SLOT,
   // centred on the BAR's centreline (not on the icon). No jelly
   // scaling (pillScaleX/Y = 1 always), no jelly springs, no rubber
-  // banding: the frame only translates (tab position) and grows
-  // (hold). The frame is positioned BY ITS TOP-LEFT from ONE
-  // shared rect (dropletRectFor, above): at rest the bar rect inset
+  // banding: the frame only translates (tab position) and scales
+  // uniformly (hold). The frame is positioned BY ITS TOP-LEFT from
+  // ONE shared rect (dropletRectFor, above): the bar rect inset
   // 4dp on all sides intersected with the tab slot — top = 4, never
   // a centre-derived top that could sit high and protrude above
   // the shrunk bar (build 10's failure) and never a slot-wide
   // capsule whose cap centre misses the bar's (build 11's
-  // failure). On HOLD the frame grows in place about the
-  // centreline to barHeight * HOLD_FRAME_SCALE (1.20x the CURRENT
-  // bar height), with NO float-up: the centroid stays on the bar's
-  // centreline at every lift value, because top is always
-  // (barHeight - height) / 2. The hold magnification is optical —
-  // the shader's uniform zoom about the droplet centre — and the
-  // icons scale with it (see MagnifiedTabIcon / LensTabIcon). At
-  // rest the droplet is the same glass as the bar (no
-  // magnification, same refraction + blur); only on hold does it
-  // zoom uniformly, and it KEEPS its blur (driven by the `held`
-  // prop into the native view; the native side eases only the
-  // magnification now).
+  // failure). The rect is the REST geometry at every lift value:
+  // on HOLD the frame grows by a UNIFORM SCALE TRANSFORM about its
+  // centre (HOLD_SCALE 1.25, in dropletFrameStyle below), with NO
+  // float-up and NO shape change — the aspect ratio is identical
+  // at rest and held. The shader's magnification is 1.0 now (the
+  // frame scale IS the magnification); the icons are seen only
+  // through the glass, via the bar-included capture the droplet
+  // always samples — nothing is re-rendered above the glass. On
+  // hold the droplet's blur eases to 0 and its veil fades to 0, so
+  // it is a clear magnifying lens, and its bend runs at 0.12x so
+  // the icons stay clean. At rest the droplet is the same glass as
+  // the bar (same refraction + blur).
   //
-  // BUILD 12 — one shared rect, so the frame, its glass wrapper,
-  // the lens icons and the edge light can never disagree. The
-  // radius is height / 2 at every lift value (at rest that IS
-  // barH/2 - 4, the concentric rule). The outline is a capsule at
-  // every step.
+  // BUILD 13 — one shared rect, so the frame, its glass wrapper
+  // and the edge light can never disagree. The radius is height /
+  // 2 (that IS barH/2 - 4, the concentric rule). The outline is a
+  // capsule at every step, and the hold scale keeps it one.
   const dropletRect = useDerivedValue(() =>
-    dropletRectFor(
-      barWidth.value,
-      barHeight.value,
-      dropletPos.value,
-      lift.value,
-      tabs.length,
-    ),
+    dropletRectFor(barWidth.value, barHeight.value, dropletPos.value, tabs.length),
   );
   const dropletFrameStyle = useAnimatedStyle(() => {
     const rect = dropletRect.value;
+    // BUILD 13: the hold growth is a UNIFORM SCALE about the frame
+    // centre (RN transforms originate at the view centre), NOT a
+    // height lerp — build 12's height-only growth changed the
+    // aspect ratio -27%/-30%. The layout (width/height/top/left)
+    // never changes; only this transform grows, 1 -> 1.25 with
+    // lift. The glass wrapper and edge light are children of the
+    // frame, so they scale along; the shader's resolution uniform
+    // stays rest-size.
+    const scale = 1 + (HOLD_SCALE - 1) * lift.value;
     return {
       width: rect.width,
       height: rect.height,
       borderRadius: rect.height / 2,
-      transform: [{ translateX: rect.left }, { translateY: rect.top }],
+      transform: [{ translateX: rect.left }, { translateY: rect.top }, { scale }],
     };
   });
   // The droplet glass wrapper: droplet frame + 48dp, at -24dp,
   // so the shader's 24dp `outset` region is available and the
   // frame clips it to the capsule — same arrangement as the bar.
   // The wrapper tracks the SAME derived rect as the frame, so the
-  // shader's capsule always matches the frame — including on hold,
-  // when the frame is taller than the bar.
+  // shader's capsule always matches the frame; on hold the frame's
+  // scale transform grows the wrapper along with it.
   const dropletGlassWrapStyle = useAnimatedStyle(() => {
     const rect = dropletRect.value;
     return {
@@ -1085,25 +1127,23 @@ export function LiquidNavbar({
     };
   });
   // BUILD 12 — the droplet edge-light aspect, from the same live
-  // derived rect as the frame (live bar height and lift). See
+  // derived rect as the frame (live bar height). BUILD 13: the
+  // rect is rest geometry at every lift value, so the aspect is
+  // constant through the hold — the uniform frame scale preserves
+  // it (build 12's height-only growth changed it mid-hold). See
   // DropletEdgeLight: the reaction mirrors it into React state.
   const dropletAspectSv = useDerivedValue(() => {
     const rect = dropletRect.value;
     return rect.width / rect.height;
   });
   // BUILD 12 — the droplet's own veil fades out as lift -> 1.
-  // On hold the droplet glass shows the bar-included capture,
-  // which already carries the bar's 0.50 veil; keeping the
-  // droplet's own veil would double-darken the held droplet to
-  // 0.25 of the photo. At rest lift = 0 and this is exactly the
-  // old static veil.
+  // BUILD 13: the bar-included capture carries NO veil (the bar's
+  // veil View is hidden during that capture), so at rest this veil
+  // is the droplet's only veil, and on hold there is no veil
+  // inside the droplet at all. At rest lift = 0 and this is
+  // exactly the old static veil.
   const dropletVeilStyle = useAnimatedStyle(() => ({
     opacity: settings.legibilityVeil * (1 - lift.value),
-  }));
-  // Labels fade and collapse with the scroll shrink.
-  const labelWrapStyle = useAnimatedStyle(() => ({
-    height: LABEL_DP * labelFraction.value,
-    opacity: labelFraction.value,
   }));
 
   const dark = settings.mode === 'dark';
@@ -1129,7 +1169,7 @@ export function LiquidNavbar({
   return (
     <View style={[styles.root, { bottom: insets.bottom + 16 }]}>
       <Animated.View style={[styles.barWrap, barWrapStyle]}>
-        <GestureDetector gesture={pan}>
+        <GestureDetector gesture={gestures}>
           <Animated.View style={styles.bar}>
             {/* The glass container carries the pill clip (overflow
                 hidden + animated radius). The bar itself is overflow
@@ -1174,32 +1214,25 @@ export function LiquidNavbar({
               />
               <EdgeLight intensity={settings.edgeLight} aspect={barAspect} />
             </Animated.View>
-            {/* THE DROPLET, BUILD 12 (rebuilt from scratch): ABOVE
+            {/* THE DROPLET, BUILD 13 (rebuilt from scratch): ABOVE
                 the icon row (zIndex 3 vs the row's 2) and above the
                 bar glass — over the navbar AND over the icons, not
                 below the icons as in builds 5-8. The frame is the
                 bar rect inset 4dp on all sides intersected with
                 the tab slot (Anivio's shape, shape only), holding
-                the same glass as the bar, and — inside the frame,
-                above the glass and the veil but BELOW the edge
-                light — one lens icon + label per tab (see
-                LensTabIcon): the droplet glass is opaque inside
-                its capsule, so the originals underneath it are
-                hidden wherever it covers them. At REST the visible
-                icon inside the droplet is the lens icon, which
-                scales uniformly on hold; ON HOLD the lens icon
-                fades out and the visible icon is the bar's own
-                icon from the bar-included capture the droplet
-                glass now samples, magnified 1.35x with the rest
-                of the navbar. The edge light is the TOPMOST
-                element of the droplet, so it crosses over the lens
-                icon and the icon reads as under the glass, not
-                pasted on top. On hold the droplet does NOT lift
-                and does NOT drop its blur: the frame GROWS in
-                place about the bar's centreline (BUILD 12,
-                HOLD_FRAME_SCALE 1.20x the CURRENT bar height)
-                and the content magnifies 1.35x. It never
-                intercepts touches. */}
+                the same glass as the bar. NOTHING is re-rendered
+                above the glass inside the frame anymore
+                (LensTabIcon is deleted): the icons stay BELOW the
+                droplet and are seen only through the glass, via
+                the bar-included capture the droplet glass always
+                samples — at rest as well as on hold. The edge
+                light is the TOPMOST element of the droplet. On
+                hold the droplet does NOT lift: the frame grows by
+                a UNIFORM SCALE (HOLD_SCALE 1.25) about its centre
+                (its layout never changes), its blur eases to 0 and
+                its veil fades to 0, so it is a clear magnifying
+                lens over the navbar, and its bend runs at 0.12x so
+                the icons stay clean. It never intercepts touches. */}
             <Animated.View style={[styles.dropletOverlay, { zIndex: 3 }]} pointerEvents="none">
               <Animated.View style={[styles.dropletFrame, dropletFrameStyle]}>
                 {HAS_REFRACTION ? (
@@ -1217,9 +1250,12 @@ export function LiquidNavbar({
                     />
                   </Animated.View>
                 ) : null}
-                {/* BUILD 12: the droplet's own veil fades out on
-                    hold (dropletVeilStyle) — the bar-included
-                    capture already carries the bar's veil. */}
+                {/* BUILD 13: the droplet's own veil fades out on
+                    hold (dropletVeilStyle). The bar-included
+                    capture carries NO veil — the bar's veil View
+                    is hidden during that capture — so at rest this
+                    veil is the droplet's only veil, and on hold
+                    there is no veil inside the droplet at all. */}
                 <Animated.View
                   style={[
                     StyleSheet.absoluteFill,
@@ -1227,23 +1263,6 @@ export function LiquidNavbar({
                     dropletVeilStyle,
                   ]}
                 />
-                {tabs.map((tab, index) => (
-                  <LensTabIcon
-                    key={tab.key}
-                    tab={tab}
-                    index={index}
-                    tabsLength={tabs.length}
-                    dropletPos={dropletPos}
-                    dropletRect={dropletRect}
-                    barWidth={barWidth}
-                    lift={lift}
-                    holdMagnification={settings.dropletMagnification}
-                    iconActive={iconActive}
-                    iconInactive={iconInactive}
-                    isActive={index === selectedIndex}
-                    labelWrapStyle={labelWrapStyle}
-                  />
-                ))}
                 <DropletEdgeLight aspectSv={dropletAspectSv} intensity={settings.edgeLight} />
               </Animated.View>
             </Animated.View>
@@ -1252,27 +1271,21 @@ export function LiquidNavbar({
                 const active = index === selectedIndex;
                 return (
                   <View key={tab.key} style={styles.tabSlot}>
-                    {/* BUILD 10: the icon BENEATH the droplet
-                        scales uniformly about the droplet centre
-                        in sync with the hold magnification (see
-                        MagnifiedTabIcon). The label does not
-                        scale. */}
-                    <MagnifiedTabIcon
+                    {/* BUILD 13: one tab's icon + label, BELOW the
+                        droplet (see TabContent). The icon never
+                        scales — the frame scale IS the hold
+                        magnification — and on hold the active
+                        tab's icon+label group shifts up 7.5dp so
+                        it sits centred in the held droplet. */}
+                    <TabContent
                       tab={tab}
                       index={index}
                       dropletPos={dropletPos}
                       lift={lift}
-                      holdMagnification={settings.dropletMagnification}
+                      labelFraction={labelFraction}
                       color={active ? iconActive : iconInactive}
                       weight={active ? 'fill' : 'regular'}
                     />
-                    <Animated.View style={[styles.labelWrap, labelWrapStyle]}>
-                      <Text
-                        style={[styles.label, { color: active ? iconActive : iconInactive }]}
-                      >
-                        {tab.label}
-                      </Text>
-                    </Animated.View>
                   </View>
                 );
               })}
@@ -1398,19 +1411,5 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     overflow: 'hidden',
-  },
-  // BUILD 10: one tab's icon + label, as seen through the
-  // droplet lens (see LensTabIcon). Slot-wide, full height,
-  // content centred — its translateX/opacity come from the
-  // animated lensStyle. It sits ABOVE the glass and veil but
-  // BELOW the droplet's edge light, so the rim light crosses over
-  // it and it reads as under the glass.
-  lensTabIcon: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

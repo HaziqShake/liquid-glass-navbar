@@ -56,15 +56,17 @@
 // reads the strip size (e.g. 540x72), which is itself the proof
 // the strip capture is live on device.
 //
-// BUILD 12 — SECOND STRIP (bar-included). The droplet samples a
+// BUILD 13 — SECOND STRIP (bar-included). The droplet samples a
 // background-only bitmap, so on hold it could only ever show the
 // photo and the re-rendered icon — never the bar. A second strip
 // bitmap is captured with the navbar left visible and only the
-// droplet subtree hidden; the droplet shader mixes background-only
-// -> bar-included by heldAnim. Captured only while the droplet is
-// held (heldAnim > 0); at rest it is skipped entirely, so the
-// strip-capture performance win is preserved. Both bitmaps are
-// strips with the same origin, so the mapping is unchanged.
+// droplet subtree (plus the bar's veil View) hidden; the droplet
+// samples it ALWAYS now (barMix 1), because the re-rendered
+// LensTabIcon is deleted and the bar strip is the only way the
+// icons are visible through the droplet at rest too. Captured
+// whenever the droplet is shown; at rest it is no longer skipped.
+// Both bitmaps are strips with the same origin, so the mapping is
+// unchanged.
 // HONEST LIMIT: the bar's own live glass (its refraction/blur)
 // cannot be in a software capture — a hardware RenderNode cannot
 // draw into the software capture canvas, and every glass view
@@ -98,11 +100,11 @@ internal class SharedBackdrop(private val scale: Int) {
    *     while capturing). This is the capture every build since 5
    *     has used; the bar and the droplet at rest sample it.
    *   - bar: the bar-included strip (the navbar left visible, only
-   *     the droplet subtree hidden). The droplet samples it on hold,
-   *     mixed in by heldAnim, so the held droplet shows the navbar
-   *     magnified instead of the bare photo. Captured only while
-   *     the droplet is held (heldAnim > 0); at rest it is skipped
-   *     entirely, so the strip-capture performance win is kept.
+   *     the droplet subtree and the bar's veil View hidden). BUILD 13:
+   *     the droplet samples it ALWAYS (barMix 1), at rest as well as
+   *     on hold — the re-rendered LensTabIcon is deleted, so this is
+   *     the only way the icons are visible through the droplet.
+   *     Captured whenever the droplet is shown.
    * Both bitmaps are strips with the same origin, so the
    * bitmapOriginY mapping is the same for both.
    */
@@ -121,8 +123,9 @@ internal class SharedBackdrop(private val scale: Int) {
   val bitmap: Bitmap?
     get() = bg.bitmap
 
-  /** The bar-included strip bitmap (droplet hold only). Null at
-   *  rest — the second capture is skipped entirely until held. */
+  /** The bar-included strip bitmap (droplet only). BUILD 13: captured
+   *  whenever the droplet is shown, so this is non-null once the
+   *  droplet has drawn once. */
   val barBitmap: Bitmap?
     get() = bar.bitmap
 
@@ -203,14 +206,14 @@ internal class SharedBackdrop(private val scale: Int) {
   }
 
   /**
-   * BUILD 12 — the second strip capture: same strip as the
+   * BUILD 13 — the second strip capture: same strip as the
    * background-only capture, but with the navbar left VISIBLE and
-   * only the droplet subtree hidden (the caller hides it). The
-   * droplet samples this bitmap on hold, mixed in by heldAnim, so
-   * the held droplet shows the navbar magnified instead of the bare
-   * photo. Called only while the droplet is held (heldAnim > 0);
-   * at rest it is skipped entirely. One extra software draw of the
-   * same strip per frame, only while held.
+   * only the droplet subtree (plus the bar's veil View) hidden
+   * (the caller hides them). The droplet samples this bitmap
+   * ALWAYS now (barMix 1), so the icons are visible through the
+   * droplet at rest as well as on hold — the re-rendered
+   * LensTabIcon is deleted. Called whenever the droplet is shown;
+   * one extra software draw of the same strip per frame.
    */
   fun captureBarStripIfNeeded(root: View, frame: Long): Throwable? {
     return captureStrip(root, frame, bar)

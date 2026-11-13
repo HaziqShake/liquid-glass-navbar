@@ -34,7 +34,12 @@ export interface NavbarSettings {
    *  UNIFORMLY — one scale factor about the droplet centre, a
    *  plain zoomed-in image, no fisheye — and the icon inside it
    *  scales by the same factor. BUILD 10: holding keeps the
-   *  droplet's blur (it no longer drops to 0). */
+   *  droplet's blur (it no longer drops to 0). BUILD 13: the
+   *  default is 1.0 — the frame scale does the magnifying now
+   *  (uniform scale transform, s = 1.25, in LiquidNavbar) — so a
+   *  shader zoom on top would push the label out of the held
+   *  droplet. Holding drops the droplet's blur to 0 (Haziq
+   *  reversed the build 9 verdict). */
   dropletMagnification: number;
   /** Edge light intensity, 0..1. Scales the corrected edge-light
    *  gradient stroke (alpha 1 at the top-left and bottom-right
@@ -75,7 +80,7 @@ export const DEFAULT_SETTINGS: NavbarSettings = {
   // 1.00, halved). Blur 55 (was 50), edge light 0.75 (was 1.00).
   barBlur: 55,
   refractionStrength: 0.5,
-  dropletMagnification: 1.35,
+  dropletMagnification: 1.0,
   edgeLight: 0.75,
   legibilityVeil: 0.5,
   barHeight: 64,

@@ -20,8 +20,9 @@
 //      captured bitmap cropped to this view's rectangle, sets a
 //      RenderEffect on THAT node (blur FIRST, then the AGSL material
 //      — the library's order — for both modes; the droplet's blur
-//      stays on while it is held — build 10, it no longer drops to
-//      0), and draws the node. The
+//      drops to 0 while it is held (build 13 — Haziq reversed the
+//      build 9 verdict that blur stays on hold), and draws the
+//      node. The
 //      shader's `backdrop` uniform is the node's recorded
 //      content — real backdrop pixels — so the bend is real.
 //   3. A cheap sampled hash of this view's rectangle in the bitmap
@@ -60,8 +61,11 @@ export type GlassViewProps = {
   /** "bar" = capsule glass with tint + rim sheen + blur; "droplet" =
    *  the SAME glass over a slot-width capsule. At rest the droplet
    *  has NO magnification (magnification 1.0); only while held
-   *  does it zoom uniformly to `magnification`. BUILD 10: the
-   *  droplet keeps its blur on hold (it no longer drops to 0). */
+   *  does it zoom uniformly to `magnification`. BUILD 13: the
+   *  droplet's blur drops to 0 on hold (it no longer keeps its
+   *  blur), its bend runs at 0.12x so the icons stay clean, and it
+   *  always samples the bar-included strip — the icons are seen
+   *  only through the glass, never re-rendered above it. */
   mode?: 'bar' | 'droplet';
   /** Strength of the bar's rim sheen / highlight. BUILD 10
    *  default 0.5 (was 1.0). Also gates the refraction (0 = no
@@ -72,7 +76,7 @@ export type GlassViewProps = {
    *  shipped look. Set to 3.0 only when the bendDiagnostic setting
    *  is ON, to prove on device whether ANY displacement reaches
    *  the screen. Never the shipped look by default. The droplet
-   *  mode ignores it (always 1.0). */
+   *  mode ignores it (always DROPLET_BEND_SCALE 0.12, build 13). */
   bendScale?: number;
   /** Mix of the tint colour into the sampled backdrop. Build 6: 0.15
    *  (clear glass). Not a user setting. */
@@ -84,20 +88,22 @@ export type GlassViewProps = {
    *  scale factor about the droplet centre (a plain zoom, no
    *  fisheye, no per-channel split). At rest the droplet renders
    *  at 1.0 (no magnification at all, same glass as the bar);
-   *  only while `held` is true does it zoom to M. Default 1.35.
-   *  The bar ignores it (always 1.0). BUILD 10: holding keeps
-   *  the droplet's blur — the ONLY change on hold is this zoom. */
+   *  only while `held` is true does it zoom to M. BUILD 13: the
+   *  default is 1.0 — the frame scale does the magnifying now
+   *  (uniform scale transform, s = 1.25) — so this only matters
+   *  if the setting is raised. The bar ignores it (always 1.0).
+   *  Holding drops the droplet's blur to 0. */
   magnification?: number;
   /** BUILD 9: the droplet's hold state. A plain boolean prop; the
-   *  native side eases magnification 1 -> M over ~200ms itself,
-   *  so no animated props ever touch this native view. BUILD 10:
-   *  the blur does NOT drop to 0 while held anymore. The bar
+   *  native side eases the droplet's blur 3.3dp -> 0 over ~200ms
+   *  itself, so no animated props ever touch this native view.
+   *  BUILD 13: the blur DOES drop to 0 while held. The bar
    *  ignores it. */
   held?: boolean;
   /** Bar blur radius in dp for the chain blur effect (blur FIRST,
-   *  material second — the library's order). BUILD 10: the
-   *  droplet keeps this blur at rest AND on hold. Default 3.3dp
-   *  (Blur setting 55). */
+   *  material second — the library's order). BUILD 13: the
+   *  droplet keeps this blur at rest only — on hold it eases to 0.
+   *  Default 3.3dp (Blur setting 55). */
   blurRadius?: number;
   /** BUILD 11 (SDK 54): StyleProp, not bare ViewStyle — a
    *  RegisteredStyle (e.g. StyleSheet.absoluteFill) is assignable
@@ -118,9 +124,9 @@ export const GlassView = requireNativeViewManager<GlassViewProps>(
 // string, for the on-screen debug readout in the DemoScreen:
 //   "cap 540x1200 barcap 540x72 | nav Y hid Y | drawn bar Y drop Y (bar)
 //    hash 1a2b3c4d | rect 24,890,372,1012"
-// cap = shared backdrop bitmap size; barcap = BUILD 12 second strip
-// bitmap size (bar-included, droplet hold only; "—" at rest, which
-// is expected — the second capture is skipped entirely until held);
+// cap = shared backdrop bitmap size; barcap = BUILD 13 second strip
+// bitmap size (bar-included; captured whenever the droplet is shown,
+// so it is present at rest too — "—" only before the first capture);
 // nav = a navbar root was found; hid = it was actually hidden during
 // the last capture; drawn bar / drop = the RenderEffect path drew at
 // least once, PER MODE (build 9: the old single flag reported only
