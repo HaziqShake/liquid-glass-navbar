@@ -67,12 +67,28 @@
 // whenever the droplet is shown; at rest it is no longer skipped.
 // Both bitmaps are strips with the same origin, so the mapping is
 // unchanged.
-// HONEST LIMIT: the bar's own live glass (its refraction/blur)
+// BUILD 14 — SYNTHETIC PILL SURFACE. The build 13 strip CANNOT
+// contain the bar's live glass by construction (GlassView.draw()
+// short-circuits during any capture, and a hardware RenderNode
+// cannot draw into the software capture canvas), so the captured
+// bar image carried the edge light, icons and labels over the
+// UNBENT photo — and three builds in a row the sim called that
+// "the navbar visible" while Haziq's phone disagreed. The bar
+// bitmap is now BUILT, not just captured: background photo +
+// a synthetic pill surface (the photo under the pill region,
+// software-blurred to the chain blur radius and tinted at the
+// 0.10 mix) + the navbar's non-glass content (icons, labels,
+// edge light) drawn over it — see captureBarStripSynthetic.
+// The droplet's own rim bend + chain blur apply on top, as
+// before. If the synthetic path is unavailable the capture falls
+// back to the plain build 13 capture and logs it (readout synth
+// N), never a silent claim.
+// HONEST LIMIT: the bar's own live glass (its refraction/blurs)
 // cannot be in a software capture — a hardware RenderNode cannot
 // draw into the software capture canvas, and every glass view
-// skips drawing during any capture — so the bar-included strip
-// carries the veil, edge light, icons and labels over the UNBENT
-// photo, and the droplet's own rim bend + chain blur apply on top.
+// skips drawing during any capture — so the pill surface is
+// synthetic (blurred photo + tint, no live bend), and the
+// droplet's own rim bend + chain blur apply on top.
 //
 // FEEDBACK LOOP. While a capture is running, `capturing` is true and
 // every GlassView short-circuits its draw(), so no glass ever ends up
@@ -83,12 +99,17 @@ package expo.modules.liquidglassrefraction
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
+import android.util.Log
 import android.view.View
 import java.util.WeakHashMap
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 internal class SharedBackdrop(private val scale: Int) {
 
@@ -99,11 +120,14 @@ internal class SharedBackdrop(private val scale: Int) {
    *   - bg: the background-only strip (the whole navbar hidden
    *     while capturing). This is the capture every build since 5
    *     has used; the bar and the droplet at rest sample it.
-   *   - bar: the bar-included strip (the navbar left visible, only
-   *     the droplet subtree and the bar's veil View hidden). BUILD 13:
-   *     the droplet samples it ALWAYS (barMix 1), at rest as well as
-   *     on hold — the re-rendered LensTabIcon is deleted, so this is
-   *     the only way the icons are visible through the droplet.
+   *   - bar: the bar-included strip. BUILD 14: BUILT, not just
+   *     captured — background photo + a synthetic pill surface
+   *     (blurred photo + tint under the pill region) + the
+   *     navbar's non-glass content drawn over it (see
+   *     captureBarStripSynthetic). The droplet samples it ALWAYS
+   *     now (barMix 1), at rest as well as on hold — the
+   *     re-rendered LensTabIcon is deleted, so this is the only
+   *     way the icons are visible through the droplet.
    *     Captured whenever the droplet is shown.
    * Both bitmaps are strips with the same origin, so the
    * bitmapOriginY mapping is the same for both.
@@ -227,38 +251,8 @@ internal class SharedBackdrop(private val scale: Int) {
     ) {
       return null
     }
-
-    val w = root.width / scale
-    // BUILD 11: the strip height is quantised UP to 16dp buckets,
-    // so a shrink/hold animation that moves the strip height by a
-    // few dp a frame does not reallocate the bitmap every frame —
-    // the bitmap is recreated only when the bucket changes. The
-    // bitmap may be a little taller than the strip; the extra rows
-    // are never sampled (every view rect sits inside the strip).
-    val bucketPx = (STRIP_BUCKET_DP * density).toInt().coerceAtLeast(1)
-    val stripHPx = (ceil(strip.height().toDouble() / bucketPx) * bucketPx).toInt()
-    val h = stripHPx / scale
-    if (w <= 0 || h <= 0) return null
-
-    var bmp = target.bitmap
-    if (bmp == null || bmp.width != w || bmp.height != h) {
-      bmp?.recycle()
-      bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-      target.bitmap = bmp
-      target.canvas = Canvas(bmp)
-    }
-    val c = target.canvas ?: return null
-
-    // Mark the frame before drawing, not after: if the draw throws,
-    // no other view under this root should retry the same failing
-    // capture in the same frame.
-    // View.getDrawingTime() is stable across every view drawn in the
-    // same frame, which is exactly the "capture once per frame"
-    // token we need without hooking Choreographer.
-    target.capturedFrame = frame
-    target.capturedStripTopPx = strip.top
-    target.capturedStripHeightPx = strip.height()
-    target.stripTopPx = strip.top
+    val c = stripCanvas(target, strip, root, density) ?: return null
+    val bmp = target.bitmap ?: return null
 
     bmp.eraseColor(Color.TRANSPARENT)
     c.save()
@@ -270,12 +264,244 @@ internal class SharedBackdrop(private val scale: Int) {
     capturing = true
     return try {
       root.draw(c)
+      // BUILD 14: mark the frame captured ONLY after a successful
+      // draw. The old code marked it BEFORE drawing, so a throwing
+      // draw left a transparent bitmap marked done and every view
+      // reused a blank frame for the rest of the frame. A throwing
+      // draw now leaves the frame unmarked, so the next glass view
+      // in the same frame retries it (at most once per view).
+      // View.getDrawingTime() is stable across every view drawn in
+      // the same frame, which is exactly the "capture once per
+      // frame" token we need without hooking Choreographer.
+      target.capturedFrame = frame
+      target.capturedStripTopPx = strip.top
+      target.capturedStripHeightPx = strip.height()
+      target.stripTopPx = strip.top
       null
     } catch (t: Throwable) {
       t
     } finally {
       capturing = false
       c.restore()
+    }
+  }
+
+  /**
+   * BUILD 11 — strip-height quantisation: the strip height is
+   * quantised UP to 16dp buckets, so a shrink/hold animation that
+   * moves the strip height by a few dp a frame does not reallocate
+   * the bitmap every frame — the bitmap is recreated only when the
+   * bucket changes. The bitmap may be a little taller than the
+   * strip; the extra rows are never sampled (every view rect sits
+   * inside the strip). Allocate (or reuse) the strip bitmap for
+   * `target`, sized for `strip`. Returns the bitmap's canvas, or
+   * null when the strip has no size.
+   */
+  private fun stripCanvas(target: StripCapture, strip: Rect, root: View, density: Float): Canvas? {
+    val w = root.width / scale
+    val bucketPx = (STRIP_BUCKET_DP * density).toInt().coerceAtLeast(1)
+    val stripHPx = (ceil(strip.height().toDouble() / bucketPx) * bucketPx).toInt()
+    val h = stripHPx / scale
+    if (w <= 0 || h <= 0) return null
+    var bmp = target.bitmap
+    if (bmp == null || bmp.width != w || bmp.height != h) {
+      bmp?.recycle()
+      bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+      target.bitmap = bmp
+      target.canvas = Canvas(bmp)
+    }
+    return target.canvas
+  }
+
+  /**
+   * BUILD 14 — the bar-included strip WITH A SYNTHETIC PILL
+   * SURFACE. Builds the bar bitmap instead of capturing it whole:
+   *   1. the background-only strip, copied opaque (the photo
+   *      under everything);
+   *   2. the synthetic pill: the photo under the pill region,
+   *      software-blurred to blurDp and tinted at tintMix,
+   *      clipped to the pill's rounded rect (drawSyntheticPill);
+   *   3. the navbar's NON-GLASS content drawn over it — the
+   *      navbar root subtree (icons, labels, edge light). The
+   *      glass views skip their draw while capturing is true, so
+   *      the bar glass and the droplet contribute nothing; the
+   *      caller hides the droplet frame and the bar's veil View
+   *      (both restored in `finally`). The whole root is NOT
+   *      drawn here: root.draw would repaint the photo over the
+   *      pill and erase step 2.
+   * The caller passes the bar rect and the navbar root rect in
+   * ROOT pixels (layout rects, from GlassView). The strip, the
+   * bitmap size and the origin are the same as the background
+   * strip's, so the droplet's mapping is unchanged. One Logcat
+   * line per bar capture (success or fallback), so the device
+   * check can see which path actually ran.
+   * Falls back to the plain build 13 capture (captureStrip with
+   * the navbar visible) when there is no usable background strip
+   * to build from — and says so, in the log and in
+   * lastBarCaptureSynthetic (false), never silently.
+   * @return null on success (or a no-op), or the throwable if a
+   * draw refused a software draw.
+   */
+  fun captureBarStripSynthetic(
+    root: View,
+    frame: Long,
+    navbarRoot: View,
+    dropletFrame: View,
+    barVeil: View?,
+    barRectPx: Rect,
+    navRectPx: Rect,
+    tintRgb: FloatArray,
+    tintMix: Float,
+    blurDp: Float,
+  ): Throwable? {
+    val density = root.resources.displayMetrics.density
+    val strip = stripFor(root, density)
+    if (frame == bar.capturedFrame && strip.top == bar.capturedStripTopPx &&
+      strip.height() == bar.capturedStripHeightPx
+    ) {
+      return null
+    }
+    val bgBmp = bg.bitmap
+    val c = stripCanvas(bar, strip, root, density)
+    val barBmp = bar.bitmap
+    if (bgBmp == null || bgBmp.isRecycled || c == null || barBmp == null ||
+      bgBmp.width != barBmp.width || bgBmp.height != barBmp.height
+    ) {
+      // No background strip to build from (first frame, or the
+      // strip changed size between the two captures): the plain
+      // build 13 capture — photo + icons, no pill surface.
+      lastBarCaptureSynthetic = false
+      Log.w(TAG, "bar capture: no usable bg strip, plain capture (no synthetic pill)")
+      val frameWasVisible = dropletFrame.visibility
+      val veilWasVisible = barVeil?.visibility
+      return try {
+        dropletFrame.visibility = View.INVISIBLE
+        if (barVeil != null) barVeil.visibility = View.INVISIBLE
+        captureStrip(root, frame, bar)
+      } finally {
+        dropletFrame.visibility = frameWasVisible
+        if (barVeil != null && veilWasVisible != null) barVeil.visibility = veilWasVisible
+      }
+    }
+    val frameWasVisible = dropletFrame.visibility
+    val veilWasVisible = barVeil?.visibility
+    dropletFrame.visibility = View.INVISIBLE
+    if (barVeil != null) barVeil.visibility = View.INVISIBLE
+    capturing = true
+    return try {
+      // 1. The background strip, opaque — the photo under everything.
+      barBmp.eraseColor(Color.TRANSPARENT)
+      c.drawBitmap(bgBmp, 0f, 0f, null)
+      // 2. The synthetic pill: blurred photo + tint, clipped to the pill.
+      drawSyntheticPill(c, bgBmp, barRectPx, strip.top, tintRgb, tintMix, blurDp, density)
+      // 3. The navbar's non-glass content over it. The canvas is
+      // scaled to bitmap px and translated by the navbar root's own
+      // position in the root, so the icons land exactly where the
+      // live bar draws them. (A point p in navbar-local coords maps
+      // to ((p.x + navLeft) / scale, (p.y + navTop - stripTop) /
+      // scale) — the root point, shifted to the strip origin, at
+      // half resolution.)
+      c.save()
+      val s = 1f / scale
+      c.scale(s, s)
+      c.translate(navRectPx.left.toFloat(), (navRectPx.top - strip.top).toFloat())
+      navbarRoot.draw(c)
+      c.restore()
+      // Mark captured ONLY after a successful draw (build 14 — see captureStrip).
+      bar.capturedFrame = frame
+      bar.capturedStripTopPx = strip.top
+      bar.capturedStripHeightPx = strip.height()
+      bar.stripTopPx = strip.top
+      lastBarCaptureSynthetic = true
+      Log.d(TAG, "bar capture: synthetic pill drawn, strip ${strip.width()}x${strip.height()} bar ${barBmp.width}x${barBmp.height} pill ${barRectPx.width()}x${barRectPx.height()} root px")
+      null
+    } catch (t: Throwable) {
+      lastBarCaptureSynthetic = false
+      t
+    } finally {
+      capturing = false
+      dropletFrame.visibility = frameWasVisible
+      if (barVeil != null && veilWasVisible != null) barVeil.visibility = veilWasVisible
+    }
+  }
+
+  /**
+   * BUILD 14 — draw the synthetic pill surface into the bar strip
+   * canvas (bitmap px): the photo under the pill region, blurred
+   * to blurDp, tinted at tintMix, clipped to the pill's rounded
+   * rect. The blur is a downscale-upscale (bilinear): the pill
+   * region is drawn into a 1/4-size bitmap and back, which softens
+   * detail by ~blurDp without RenderScript or a hardware-only
+   * RenderEffect. With blurDp < 1 there is nothing to soften — the
+   * region is already the raw photo from step 1 — so only the tint
+   * is drawn. The tint is the tint colour at alpha tintMix over the
+   * photo, which is exactly mix(photo, tint, tintMix) for the
+   * opaque photo.
+   */
+  private fun drawSyntheticPill(
+    canvas: Canvas,
+    bgBmp: Bitmap,
+    barRectPx: Rect,
+    stripTopPx: Int,
+    tintRgb: FloatArray,
+    tintMix: Float,
+    blurDp: Float,
+    density: Float,
+  ) {
+    val s = scale.toFloat()
+    val left = barRectPx.left / s
+    val top = (barRectPx.top - stripTopPx) / s
+    val right = barRectPx.right / s
+    val bottom = (barRectPx.bottom - stripTopPx) / s
+    if (right <= left || bottom <= top) return
+    val radius = (bottom - top) / 2f
+    val pillRect = RectF(left, top, right, bottom)
+    val filterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    val blurPx = blurDp * density / s
+    if (blurPx >= 1f) {
+      // Blurred photo: downscale the pill region (+margin, so the
+      // downscale edge never shows at the rim) to 1/4, then draw it
+      // back up, clipped to the pill.
+      val margin = (blurPx * 2f).toInt() + 4
+      val srcL = max(0, left.toInt() - margin)
+      val srcT = max(0, top.toInt() - margin)
+      val srcR = min(bgBmp.width, ceil(right).toInt() + margin)
+      val srcB = min(bgBmp.height, ceil(bottom).toInt() + margin)
+      if (srcR > srcL && srcB > srcT) {
+        val factor = 4
+        val smallW = max(1, (srcR - srcL) / factor)
+        val smallH = max(1, (srcB - srcT) / factor)
+        val small = Bitmap.createBitmap(smallW, smallH, Bitmap.Config.ARGB_8888)
+        val sc = Canvas(small)
+        sc.drawBitmap(
+          bgBmp, Rect(srcL, srcT, srcR, srcB),
+          RectF(0f, 0f, smallW.toFloat(), smallH.toFloat()), filterPaint,
+        )
+        val path = Path()
+        path.addRoundRect(pillRect, radius, radius, Path.Direction.CW)
+        canvas.save()
+        canvas.clipPath(path)
+        canvas.drawBitmap(
+          small, null,
+          RectF(srcL.toFloat(), srcT.toFloat(), srcR.toFloat(), srcB.toFloat()),
+          filterPaint,
+        )
+        canvas.restore()
+        small.recycle()
+      }
+    }
+    // Tint: mix the tint colour in at tintMix.
+    if (tintMix > 0f) {
+      val tintPaint = Paint().apply {
+        color = Color.argb(
+          (tintMix * 255f).roundToInt().coerceIn(0, 255),
+          (tintRgb[0] * 255f).roundToInt().coerceIn(0, 255),
+          (tintRgb[1] * 255f).roundToInt().coerceIn(0, 255),
+          (tintRgb[2] * 255f).roundToInt().coerceIn(0, 255),
+        )
+        style = Paint.Style.FILL
+      }
+      canvas.drawRoundRect(pillRect, radius, radius, tintPaint)
     }
   }
 
@@ -302,6 +528,17 @@ internal class SharedBackdrop(private val scale: Int) {
   }
 
   companion object {
+    private const val TAG = "SharedBackdrop"
+
+    /**
+     * BUILD 14: true when the last bar capture actually drew the
+     * synthetic pill surface (false after a plain fallback or a
+     * failed capture). Read by GlassView for the debug readout —
+     * the proof the pill is really in the bar strip.
+     */
+    @Volatile
+    var lastBarCaptureSynthetic = false
+
     /**
      * BUILD 11 — strip margin above and below the union of the
      * glass rects: the refraction mirror band's reach

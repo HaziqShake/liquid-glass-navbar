@@ -190,6 +190,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import expo.modules.kotlin.AppContext
+import kotlin.math.roundToInt
 
 /**
  * Build-6 verification aid. The last native glass state, written by
@@ -215,14 +216,32 @@ internal object GlassDebugState {
   @Volatile var lastHash = "—"
   @Volatile var lastRect = "—"
   @Volatile var lastMode = "—"
+  // BUILD 14 — bar-capture provability. dropletFrameFound /
+  // barVeilFound: findDropletFrame / findBarVeil succeeded on the
+  // last droplet pre-draw (the synthetic bar surface needs both);
+  // barSynthetic: the last bar capture actually drew the synthetic
+  // pill (not the plain fallback); barMix / heldAnim: the
+  // droplet's current mix and hold animation (from buildEffect /
+  // onDraw); srcRect: the droplet's sample rectangle inside the
+  // strip bitmap (layout rect, half resolution).
+  @Volatile var dropletFrameFound = false
+  @Volatile var barVeilFound = false
+  @Volatile var barSynthetic = false
+  @Volatile var barMix = "—"
+  @Volatile var heldAnim = "—"
+  @Volatile var srcRect = "—"
 
   fun snapshot(): String {
     val nav = if (navbarFound) "Y" else "N"
     val hid = if (navbarHidden) "Y" else "N"
     val bar = if (effectDrawnBar) "Y" else "N"
     val drop = if (effectDrawnDroplet) "Y" else "N"
+    val frame = if (dropletFrameFound) "Y" else "N"
+    val veil = if (barVeilFound) "Y" else "N"
+    val synth = if (barSynthetic) "Y" else "N"
     return "cap $bitmapSize barcap $barBitmapSize | nav $nav hid $hid | drawn bar $bar drop $drop ($lastMode)\n" +
-      "hash $lastHash | rect $lastRect"
+      "hash $lastHash | rect $lastRect\n" +
+      "dropFrame $frame barVeil $veil synth $synth | barMix $barMix heldAnim $heldAnim | src $srcRect"
   }
 }
 
@@ -261,12 +280,14 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     // BUILD 9: the droplet's HOLD magnification M (uniform zoom
     // about the droplet centre). At rest the droplet renders at
     // magnification 1.0 — NO magnification at all, same glass as
-    // the bar. Only while held does it zoom to M. Default 1.35
-    // (the old rim-magnification default, kept as the hold zoom).
-    // BUILD 13: the JS default is 1.0 — the frame scale does the
-    // magnifying now (uniform scale transform, s = 1.25) — so this
-    // native default only applies if JS never passes the prop.
-    const val DEFAULT_MAGNIFICATION = 1.35f
+    // the bar. Only while held does it zoom to M. BUILD 13: the
+    // JS default is 1.0 — the frame scale does the magnifying now
+    // (uniform scale transform, s = 1.25) — so this native
+    // default only applies if JS never passes the prop. BUILD 14:
+    // aligned to 1.0 (was 1.35): the JS default (settings.ts
+    // dropletMagnification 1.0) and the native default must agree
+    // — a droplet that never receives the prop must not zoom 1.35x.
+    const val DEFAULT_MAGNIFICATION = 1.0f
     /** Blur radius in dp at the default Blur setting (55/100).
      *  BUILD 10: 3.3dp (was 3dp at Blur 50). The JS mapping is
      *  barBlur * 0.06, so 55 -> 3.3dp. BUILD 13: the droplet's
@@ -317,7 +338,9 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   // Build 8 DIAGNOSTIC: multiplies the coherent displacement.
   // Default 1.0 (shipped look); 3.0 only from the bendDiagnostic
   // setting, to prove on device whether ANY displacement reaches
-  // the screen. Droplet mode ignores it (always 1.0).
+  // the screen. Droplet mode ignores it (always DROPLET_BEND_SCALE
+  // 0.12 — buildEffect forces that for droplet mode, so the prop
+  // is dead there; the droplet GlassView no longer passes it).
   private var bendScale: Float = DEFAULT_BEND_SCALE
   private var tintMix: Float = DEFAULT_TINT_MIX
   private var tintColor: FloatArray = DEFAULT_TINT_COLOR.copyOf()
@@ -375,8 +398,6 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   private val srcRect = Rect()
   private val dstRect = Rect()
   private val hashRect = Rect()
-  private val locThis = IntArray(2)
-  private val locRoot = IntArray(2)
 
   init {
     // A plain View defaults to willNotDraw=true, which would skip
@@ -520,8 +541,16 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
       Log.w(TAG, "capture: navbar root NOT FOUND, capture will include the navbar (build 4 behaviour)")
     }
     val wasVisible = navbarRoot?.visibility
+    // BUILD 14: navbarHidden is published from THIS flag, set only
+    // where the root is actually set INVISIBLE for the capture —
+    // never from "a root was found". (Build 13 assigned
+    // navbarRoot != null, which means "root found", not "hidden".)
+    var navbarHiddenThisCapture = false
     val failure = try {
-      if (navbarRoot != null) navbarRoot.visibility = View.INVISIBLE
+      if (navbarRoot != null) {
+        navbarRoot.visibility = View.INVISIBLE
+        navbarHiddenThisCapture = true
+      }
       cap.captureIfNeeded(root, root.drawingTime)
     } finally {
       if (navbarRoot != null && wasVisible != null) navbarRoot.visibility = wasVisible
@@ -529,52 +558,87 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     if (failure != null) {
       Log.w(TAG, "backdrop capture failed (${failure.javaClass.simpleName}); reusing last frame")
     }
-    // BUILD 13 — BAR-INCLUDED CAPTURE (droplet only, ALWAYS).
-    // Build 12 captured this strip only while held, because the
-    // droplet sampled the background-only bitmap at rest and the
-    // icon it covered was re-rendered above the glass (LensTabIcon).
-    // Build 13 deletes the re-rendered icon entirely — the icons
-    // stay BELOW the droplet and are seen only through the glass —
-    // so the droplet must sample the bar-included strip at REST
-    // too, or the active tab's icon would be invisible under it.
-    // This second strip capture leaves the navbar VISIBLE and hides
-    // only the droplet subtree (the frame found by
-    // findDropletFrame) AND the bar's veil View (found by
-    // findBarVeil): the bar's 0.50 veil must NOT be baked into the
-    // bitmap, or the held droplet could never be veil-free — the
-    // droplet carries its own veil View on top, which fades to 0
-    // on hold. Both views are restored in `finally`. One extra
-    // software draw of the same small strip per frame; the strip
-    // is ~145dp tall at half resolution, and the dirty-check hash
-    // below still gates repaints on a static screen.
-    // HONEST LIMIT: the bar's own live glass is NOT in this bitmap
-    // — a hardware RenderNode cannot draw into the software capture
-    // canvas, and every glass view skips drawing during any capture
-    // — so it carries the veil, edge light, icons and labels over
-    // the UNBENT photo, and the droplet's own rim bend + chain blur
-    // apply on top of that.
+    // BUILD 14 — BAR-INCLUDED CAPTURE WITH A SYNTHETIC PILL
+    // SURFACE (droplet only, ALWAYS). Build 12 captured this strip
+    // only while held; build 13 deletes the re-rendered icon
+    // entirely — the icons stay BELOW the droplet (while held) and
+    // are seen only through the glass — so the droplet must sample
+    // the bar-included strip at REST too, or the active tab's icon
+    // would be invisible under it.
+    //
+    // WHY SYNTHETIC (the build 13 failure, third build in a row
+    // the sim claimed the bar was visible and the device disagreed):
+    // the second-strip capture CANNOT contain the navbar's live
+    // glass, even when it runs perfectly. GlassView.draw()
+    // short-circuits during any capture, and a hardware RenderNode
+    // cannot draw into the software capture canvas, so the bar
+    // strip contains only the photo, the edge-light stroke and the
+    // icons/labels, with the bar veil deliberately hidden. The pill
+    // surface itself (blur, tint, refraction, veil) is absent BY
+    // CONSTRUCTION — the sim's "bar visible" meant "icons visible",
+    // which is exactly what Haziq rejects. So the capture no
+    // longer pretends to contain the bar: SharedBackdrop builds
+    // the bar bitmap as background photo + a SYNTHETIC pill surface
+    // (a software-blurred copy of the photo under the pill region,
+    // tinted at the 0.10 mix) + the navbar's non-glass content
+    // (icons, labels, edge light) drawn over it. The droplet's own
+    // rim bend + chain blur apply on top, as before. If the
+    // synthetic path is ever unavailable (no bg strip, no bar
+    // rect), it falls back to the plain build 13 capture and logs
+    // it — never a silent claim.
     if (mode == "droplet") {
       val dropletFrame = findDropletFrame()
+      GlassDebugState.dropletFrameFound = dropletFrame != null
+      val barVeil = findBarVeil()
+      GlassDebugState.barVeilFound = barVeil != null
       if (dropletFrame != null) {
-        val barVeil = findBarVeil()
-        val frameWasVisible = dropletFrame.visibility
-        val veilWasVisible = barVeil?.visibility
-        val barFailure = try {
-          dropletFrame.visibility = View.INVISIBLE
-          if (barVeil != null) barVeil.visibility = View.INVISIBLE
-          cap.captureBarStripIfNeeded(root, root.drawingTime)
-        } finally {
-          dropletFrame.visibility = frameWasVisible
-          if (barVeil != null && veilWasVisible != null) {
-            barVeil.visibility = veilWasVisible
+        val barView = findBarView()
+        val barRect = Rect()
+        val navRect = Rect()
+        val navRoot = navbarRoot
+        val haveBarRect = barView != null && layoutRectInRootFrom(barView, barRect)
+        val haveNavRect = navRoot != null && layoutRectInRootFrom(navRoot, navRect)
+        val barFailure = if (haveBarRect && haveNavRect && navRoot != null) {
+          cap.captureBarStripSynthetic(
+            root, root.drawingTime, navRoot, dropletFrame, barVeil,
+            barRect, navRect, tintColor, tintMix, blurRadiusDp,
+          )
+        } else {
+          // Fallback: the plain build 13 capture (droplet subtree
+          // + bar veil hidden, navbar visible). Never a crash, and
+          // the readout's synth flag stays N so the fallback is
+          // visible instead of claimed away.
+          if (!haveBarRect) {
+            Log.w(TAG, "bar capture: no bar rect, falling back to the plain capture")
+          } else {
+            Log.w(TAG, "bar capture: no navbar root rect, falling back to the plain capture")
+          }
+          val frameWasVisible = dropletFrame.visibility
+          val veilWasVisible = barVeil?.visibility
+          try {
+            dropletFrame.visibility = View.INVISIBLE
+            if (barVeil != null) barVeil.visibility = View.INVISIBLE
+            cap.captureBarStripIfNeeded(root, root.drawingTime)
+          } finally {
+            dropletFrame.visibility = frameWasVisible
+            if (barVeil != null && veilWasVisible != null) {
+              barVeil.visibility = veilWasVisible
+            }
           }
         }
+        GlassDebugState.barSynthetic = SharedBackdrop.lastBarCaptureSynthetic
         if (barFailure != null) {
           Log.w(TAG, "bar capture failed (${barFailure.javaClass.simpleName}); reusing last frame")
         }
-      } else if (!dropletFrameMissingLogged) {
-        dropletFrameMissingLogged = true
-        Log.w(TAG, "bar capture: droplet frame NOT FOUND, droplet falls back to the background-only bitmap")
+      } else {
+        // No droplet frame, no bar capture at all: the droplet
+        // falls back to the background-only bitmap, so the
+        // synthetic flag must read N (not a stale Y).
+        GlassDebugState.barSynthetic = false
+        if (!dropletFrameMissingLogged) {
+          dropletFrameMissingLogged = true
+          Log.w(TAG, "bar capture: droplet frame NOT FOUND, droplet falls back to the background-only bitmap")
+        }
       }
     }
     // Only repaint when the backdrop under THIS view actually
@@ -605,10 +669,11 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
       hash = hash * 31 + backdropHash(shared?.barBitmap, shared?.barBitmapOriginY() ?: 0)
     }
     // Build 6 debug: publish the native state so the on-screen
-    // readout can show it. navbarHidden is true only when a root
-    // was actually found AND set INVISIBLE for this capture; if
-    // findNavbarRoot ever fails, this reads nav N hid N and the
-    // Appetize check settles it instead of guessing.
+    // readout can show it. navbarHidden is true only when the root
+    // was actually set INVISIBLE for this capture (BUILD 14: from
+    // the navbarHiddenThisCapture flag, not from "a root was
+    // found"); if findNavbarRoot ever fails, this reads nav N hid
+    // N and the device check settles it instead of guessing.
     val bmpNow = shared?.bitmap
     GlassDebugState.bitmapSize =
       if (bmpNow != null) "${bmpNow.width}x${bmpNow.height}" else "—"
@@ -616,7 +681,7 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     GlassDebugState.barBitmapSize =
       if (barBmpNow != null) "${barBmpNow.width}x${barBmpNow.height}" else "—"
     GlassDebugState.navbarFound = navbarRoot != null
-    GlassDebugState.navbarHidden = navbarRoot != null
+    GlassDebugState.navbarHidden = navbarHiddenThisCapture
     GlassDebugState.lastHash = "%08x".format(hash)
     GlassDebugState.lastRect =
       "${curRect.left},${curRect.top},${curRect.right},${curRect.bottom}"
@@ -699,6 +764,17 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   }
 
   /**
+   * BUILD 14: the bar view itself — the droplet frame's parent's
+   * parent (overlay, then bar). Shared by findBarVeil and the
+   * synthetic bar capture (which needs the bar's layout rect in
+   * root pixels).
+   */
+  private fun findBarView(): View? {
+    val frame = findDropletFrame() ?: return null
+    return (frame.parent as? ViewGroup)?.parent as? View
+  }
+
+  /**
    * BUILD 13: find the bar's veil View — the plain leaf View that
    * darkens the bar glass (LiquidNavbar.tsx styles.veil, opacity
    * legibilityVeil 0.50, inside the bar's glassContainer) — so the
@@ -723,8 +799,7 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   private var barVeilMissingLogged = false
 
   private fun findBarVeil(): View? {
-    val frame = findDropletFrame() ?: return null
-    val bar = (frame.parent as? ViewGroup)?.parent as? View ?: return null
+    val bar = findBarView() ?: return null
     val barW = bar.width
     val barH = bar.height
     val stack = mutableListOf<View>(bar)
@@ -786,16 +861,59 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
   }
 
   /**
-   * This view's rectangle in ROOT pixels (full resolution), for the
-   * BUILD 11 strip union. False when the root is gone.
+   * BUILD 14 — this view's rectangle in ROOT pixels (full
+   * resolution), from the LAYOUT rect, for the BUILD 11 strip
+   * union. False when the root is gone or the ancestor chain
+   * breaks before the root.
+   *
+   * WHY THE LAYOUT RECT: the old code used getLocationInWindow,
+   * which maps through the view's OWN matrix AND every ancestor's
+   * matrix — under the droplet's 1.25x hold scale it returns the
+   * SCALED top-left plus the UNSCALED width/height, so the sample
+   * window was displaced from the true centre by (s-1)/2 x size
+   * (~17dp horizontally, ~13dp vertically for the frame+48dp
+   * view) and the displayed icon landed ~1.25x that offset from
+   * the droplet centre — the build 13 off-centre magnification.
+   * The layout rect (getLeft/getTop, plus translationX/Y, minus
+   * ancestor scroll) is scale-free: the RenderNode is recorded at
+   * layout size and the ancestor scale handles the display, so
+   * the sample rect must be the layout rect. Do NOT "fix" this
+   * back to getLocationInWindow: the scale pivot is correct (RN
+   * transforms originate at the view centre), the rect was wrong.
+   * The droplet frame's translateX/translateY positioning IS
+   * included (translationX/Y); its hold SCALE is not — the scale
+   * applies to the recorded node, not to the rect it samples.
    */
   private fun viewRectInRoot(out: Rect): Boolean {
+    return layoutRectInRootFrom(this, out)
+  }
+
+  /**
+   * BUILD 14 — the layout rect of an arbitrary view in ROOT
+   * pixels (full resolution). Walks the parent chain accumulating
+   * each view's layout position (left/top) plus its translation,
+   * minus the parent's scroll offset. Stops at (excluding) the
+   * root view, whose own position is the origin the capture draws
+   * from — no getLocationInWindow, no window offsets anywhere.
+   */
+  private fun layoutRectInRootFrom(start: View, out: Rect): Boolean {
     val root = rootView ?: return false
-    getLocationInWindow(locThis)
-    root.getLocationInWindow(locRoot)
-    val left = locThis[0] - locRoot[0]
-    val top = locThis[1] - locRoot[1]
-    out.set(left, top, left + width, top + height)
+    var x = 0f
+    var y = 0f
+    var node: View? = start
+    while (node != null && node !== root) {
+      val parent = node.parent as? View ?: return false
+      x += node.left + node.translationX - parent.scrollX
+      y += node.top + node.translationY - parent.scrollY
+      node = parent
+    }
+    if (node !== root) return false
+    out.set(
+      x.roundToInt(),
+      y.roundToInt(),
+      (x + start.width).roundToInt(),
+      (y + start.height).roundToInt(),
+    )
     return true
   }
 
@@ -806,18 +924,21 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
    * whose origin is the strip's top edge in root pixels — subtract
    * it (bitmapOriginY), so the rect lands on the same pixels it
    * would have in a full-root bitmap and the bend is unchanged.
+   * BUILD 14: the rect is the LAYOUT rect now (see viewRectInRoot
+   * above) — the old getLocationInWindow form displaced the
+   * window under the hold scale and also left the strip ~10dp
+   * short of the held droplet's true bottom edge.
    */
   private fun viewRectInBitmap(bmp: Bitmap, out: Rect, originY: Int? = null): Boolean {
-    val root = rootView ?: return false
-    getLocationInWindow(locThis)
-    root.getLocationInWindow(locRoot)
     // BUILD 12: the origin is the bitmap's own strip top — the bg
     // strip's by default, the bar strip's when the caller passes it.
     val origin = originY ?: (shared?.bitmapOriginY() ?: 0)
-    val left = (locThis[0] - locRoot[0]) / CAPTURE_SCALE
-    val top = (locThis[1] - locRoot[1] - origin) / CAPTURE_SCALE
-    val right = left + width / CAPTURE_SCALE
-    val bottom = top + height / CAPTURE_SCALE
+    val rootRect = Rect()
+    if (!layoutRectInRootFrom(this, rootRect)) return false
+    val left = rootRect.left / CAPTURE_SCALE
+    val top = (rootRect.top - origin) / CAPTURE_SCALE
+    val right = rootRect.right / CAPTURE_SCALE
+    val bottom = rootRect.bottom / CAPTURE_SCALE
     if (right <= 0 || bottom <= 0 || left >= bmp.width || top >= bmp.height) return false
     out.set(
       left.coerceIn(0, bmp.width),
@@ -897,6 +1018,11 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
       if (!viewRectInBitmap(contentBmp, srcRect, contentOrigin)) {
         srcRect.set(0, 0, contentBmp.width, contentBmp.height)
       }
+      // BUILD 14: publish the sample rect for the readout — the
+      // proof of which pixels the shader actually bends. (Layout
+      // rect, half resolution; see viewRectInBitmap.)
+      GlassDebugState.srcRect =
+        "${srcRect.left},${srcRect.top},${srcRect.right},${srcRect.bottom}"
       dstRect.set(0, 0, w, h)
       rec.drawBitmap(contentBmp, srcRect, dstRect, null)
       node.endRecording()
@@ -1027,6 +1153,11 @@ class GlassView(context: Context, appContext: AppContext) : View(context),
     // droplet falls back to the background-only bitmap.
     val barBmp = if (mode == "droplet") shared?.barBitmap else null
     val barMix = if (useBarNode) 1f else 0f
+    // BUILD 14: publish the mix and the hold animation for the
+    // readout, so the device check can see what the droplet is
+    // actually sampling instead of taking it on trust.
+    GlassDebugState.barMix = "%.2f".format(barMix)
+    GlassDebugState.heldAnim = "%.2f".format(heldAnim)
     shader.setFloatUniform("barMix", barMix)
     shader.setFloatUniform("nodeIsBar", if (useBarNode) 1f else 0f)
     // The mix partner: the background strip when the node holds the
@@ -1169,18 +1300,23 @@ uniform float iLens;
 // zoomed-in image, no fisheye. Applied BEFORE the edge
 // displacement, so the lens still bends the magnified surface.
 uniform float magnification;
-// BUILD 13: the bar-included backdrop (a second strip capture with
-// the navbar visible, only the droplet subtree and the bar's veil
-// hidden) and the mix from the background-only backdrop to it.
-// The droplet ALWAYS runs at 1.0 now — the re-rendered LensTabIcon
-// is deleted, so the bar image is the only way the icons are
-// visible through the droplet, at rest as well as on hold. The bar
-// always runs at 0.0. HONEST LIMIT: the bar's own live glass is
-// not in the bar-included capture (a hardware RenderNode cannot
-// draw into the software capture canvas), so the captured bar image
-// carries the edge light, icons and labels over the UNBENT photo
-// (no veil — it is hidden during the capture); the droplet's own
-// rim bend + chain blur apply on top of that.
+// BUILD 14: the bar-included backdrop (a second strip capture: the
+// background photo + a SYNTHETIC pill surface — a software-blurred
+// copy of the photo under the pill region, tinted at the 0.10 mix —
+// with the navbar's non-glass content, edge light, icons and labels,
+// drawn over it; only the droplet subtree and the bar's veil hidden)
+// and the mix from the background-only backdrop to it. The droplet
+// ALWAYS runs at 1.0 now — the re-rendered LensTabIcon is deleted,
+// so the bar image is the only way the icons are visible through
+// the droplet, at rest as well as on hold. The bar always runs at
+// 0.0. HONEST LIMIT (unchanged): the bar's own LIVE glass is not in
+// the bar-included capture (a hardware RenderNode cannot draw into
+// the software capture canvas), so the pill surface is synthetic —
+// blurred photo + tint, no live refraction bend — and the droplet's
+// own rim bend + chain blur apply on top of that. The synthetic
+// surface is what makes the held droplet read as a pill rather
+// than bare photo; the readout's `synth` flag says whether it was
+// actually drawn.
 // nodeIsBar (BUILD 13): 1.0 while the node holds the BAR strip
 // (whenever it exists for the droplet — only the node content gets
 // the chain blur, so the bar image must BE the node content to
